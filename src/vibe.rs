@@ -55,8 +55,7 @@ pub struct VibePlugin;
 
 impl Plugin for VibePlugin {
     fn build(&self, app: &mut App) {
-        let meta: serde_json::Value =
-            serde_json::from_str(BEATS_JSON).expect("valid beats json");
+        let meta: serde_json::Value = serde_json::from_str(BEATS_JSON).expect("valid beats json");
         let beat_times = meta["beat_times"]
             .as_array()
             .expect("beat_times array")

@@ -55,6 +55,7 @@ fn main() -> AppExit {
                 release_cursor.run_if(input_just_pressed(KeyCode::Escape)),
                 vibe_visuals,
                 show_now_playing,
+                update_iidx,
             ),
         )
         .run()
@@ -123,6 +124,19 @@ fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>
 #[derive(Component)]
 struct NowPlayingLabel;
 
+/// The IIDX clock: a lane where notes cross the judgment line exactly on
+/// each analyzed beat — an eyeball test of beat-grid accuracy vs your ears.
+#[derive(Component)]
+struct IidxNote(usize);
+
+#[derive(Component)]
+struct IidxLine;
+
+const IIDX_LANE_W: f32 = 200.0;
+const IIDX_LINE_X: f32 = 32.0;
+const IIDX_PX_PER_SEC: f32 = 110.0;
+const IIDX_NOTE_POOL: usize = 8;
+
 fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
     commands.spawn((
         Text::new(format!("♪ {} — {}", now.artist, now.title)),
@@ -140,6 +154,92 @@ fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
         Visibility::Hidden,
         NowPlayingLabel,
     ));
+
+    // iidx clock lane, bottom-right
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(10.0),
+                bottom: Val::Px(8.0),
+                width: Val::Px(IIDX_LANE_W),
+                height: Val::Px(30.0),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.05, 0.05, 0.65)),
+        ))
+        .with_children(|lane| {
+            lane.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(IIDX_LINE_X),
+                    top: Val::Px(2.0),
+                    width: Val::Px(2.0),
+                    height: Val::Px(26.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(1.0, 1.0, 1.0)),
+                IidxLine,
+            ));
+            for i in 0..IIDX_NOTE_POOL {
+                lane.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(-10.0),
+                        top: Val::Px(5.0),
+                        width: Val::Px(4.0),
+                        height: Val::Px(20.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.53, 0.81, 0.80)),
+                    Visibility::Hidden,
+                    IidxNote(i),
+                ));
+            }
+        });
+}
+
+/// Scroll notes right-to-left so each crosses the line at its exact beat time.
+fn update_iidx(
+    clock: Res<vibe::BeatClock>,
+    mut notes: Query<(&IidxNote, &mut Node, &mut Visibility), Without<IidxLine>>,
+    mut line: Query<&mut BackgroundColor, With<IidxLine>>,
+) {
+    if !clock.playing {
+        return;
+    }
+    let now = clock.time_s;
+    let lookahead = ((IIDX_LANE_W - IIDX_LINE_X) / IIDX_PX_PER_SEC) as f64;
+    let lookbehind = (IIDX_LINE_X / IIDX_PX_PER_SEC) as f64;
+
+    let start = clock.beat_times.partition_point(|&b| b < now - lookbehind);
+    let upcoming: Vec<f64> = clock
+        .beat_times
+        .iter()
+        .copied()
+        .skip(start)
+        .take_while(|&b| b < now + lookahead)
+        .collect();
+
+    for (note, mut node, mut vis) in &mut notes {
+        if let Some(&beat) = upcoming.get(note.0) {
+            node.left = Val::Px(IIDX_LINE_X + ((beat - now) as f32) * IIDX_PX_PER_SEC - 2.0);
+            *vis = Visibility::Visible;
+        } else {
+            *vis = Visibility::Hidden;
+        }
+    }
+
+    // line flashes white on the beat, decays to teal
+    let pulse = (1.0 - clock.beat_phase()).powi(3);
+    for mut bg in &mut line {
+        bg.0 = Color::srgb(
+            0.53 + 0.47 * pulse,
+            0.81 + 0.19 * pulse,
+            0.80 + 0.20 * pulse,
+        );
+    }
 }
 
 /// Reveal the now-playing tag once audio actually starts.
