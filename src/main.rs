@@ -49,7 +49,15 @@ struct PlayerInput;
 fn setup_player(mut commands: Commands) {
     let player = commands
         .spawn((
-            CharacterController::default(),
+            CharacterController {
+                // tuning pass 1: faster base, dashdance-crisp reversals
+                // (high accel converges onto the new wish dir fast; high friction
+                //  kills stale velocity fast; buffered jumps keep bhop alive)
+                speed: 15.0,
+                acceleration_hz: 16.0,
+                friction_hz: 18.0,
+                ..default()
+            },
             // cylinder over capsule: parry likes it better (ahoy readme)
             Collider::cylinder(0.4, 1.8),
             Transform::from_xyz(0.0, 3.0, 8.0),
