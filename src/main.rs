@@ -53,7 +53,7 @@ fn setup_player(mut commands: Commands) {
                 // tuning pass 1: faster base, dashdance-crisp reversals
                 // (high accel converges onto the new wish dir fast; high friction
                 //  kills stale velocity fast; buffered jumps keep bhop alive)
-                speed: 15.0,
+                speed: 17.5,
                 acceleration_hz: 16.0,
                 friction_hz: 18.0,
                 ..default()
