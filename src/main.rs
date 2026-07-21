@@ -1,80 +1,197 @@
-use bevy::prelude::*;
+use avian3d::prelude::*;
+use bevy::{
+    input::common_conditions::input_just_pressed,
+    prelude::*,
+    window::{CursorGrabMode, CursorOptions},
+};
+use bevy_ahoy::prelude::*;
+use bevy_enhanced_input::prelude::*;
 
-/// Phase 0 scaffold: a low-poly dream shard spinning in teal fog.
-/// Proves the native + wasm render pipeline before any gameplay exists.
-fn main() {
+/// Phase 1: quake movement (bevy_ahoy) in a graybox dream arena.
+/// Click to grab the mouse, Esc to release. WASD + Space, air-strafe welcome.
+fn main() -> AppExit {
     App::new()
-        .insert_resource(ClearColor(Color::srgb(0.004, 0.055, 0.06)))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "moe transit arcade".into(),
-                canvas: Some("#mta-canvas".into()),
-                fit_canvas_to_parent: true,
-                prevent_default_event_handling: true,
+        .insert_resource(ClearColor(DEEP_TEAL))
+        .add_plugins((
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "moe transit arcade".into(),
+                    canvas: Some("#mta-canvas".into()),
+                    fit_canvas_to_parent: true,
+                    prevent_default_event_handling: true,
+                    ..default()
+                }),
                 ..default()
             }),
-            ..default()
-        }))
-        .add_systems(Startup, setup)
-        .add_systems(Update, spin)
-        .run();
+            PhysicsPlugins::default(),
+            EnhancedInputPlugin,
+            AhoyPlugins::default(),
+        ))
+        .add_input_context::<PlayerInput>()
+        .add_systems(Startup, (setup_arena, setup_player))
+        .add_systems(
+            Update,
+            (
+                capture_cursor.run_if(input_just_pressed(MouseButton::Left)),
+                release_cursor.run_if(input_just_pressed(KeyCode::Escape)),
+            ),
+        )
+        .run()
 }
 
-#[derive(Component)]
-struct Spinner;
+const DEEP_TEAL: Color = Color::srgb(0.004, 0.055, 0.06);
+const ARENA_TEAL: Color = Color::srgb(0.075, 0.478, 0.498);
+const FLOOR_TEAL: Color = Color::srgb(0.016, 0.11, 0.115);
 
-fn setup(
+#[derive(Component, Default)]
+struct PlayerInput;
+
+fn setup_player(mut commands: Commands) {
+    let player = commands
+        .spawn((
+            CharacterController::default(),
+            // cylinder over capsule: parry likes it better (ahoy readme)
+            Collider::cylinder(0.4, 1.8),
+            Transform::from_xyz(0.0, 3.0, 8.0),
+            PlayerInput,
+            actions!(PlayerInput[
+                (
+                    Action::<Movement>::new(),
+                    DeadZone::default(),
+                    Bindings::spawn((Cardinal::wasd_keys(), Axial::left_stick()))
+                ),
+                (
+                    Action::<Jump>::new(),
+                    bindings![KeyCode::Space, GamepadButton::South],
+                ),
+                (
+                    Action::<Crouch>::new(),
+                    bindings![KeyCode::ControlLeft, GamepadButton::LeftTrigger2],
+                ),
+                (
+                    Action::<RotateCamera>::new(),
+                    Bindings::spawn((
+                        Spawn((Binding::mouse_motion(), Scale::splat(0.07))),
+                        Axial::right_stick().with((Scale::splat(4.0), DeadZone::default())),
+                    ))
+                ),
+            ]),
+        ))
+        .id();
+
+    commands.spawn((
+        Camera3d::default(),
+        CharacterControllerCameraOf::new(player),
+        DistanceFog {
+            color: DEEP_TEAL,
+            falloff: FogFalloff::Linear {
+                start: 12.0,
+                end: 60.0,
+            },
+            ..default()
+        },
+    ));
+}
+
+fn setup_arena(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, 1.2, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
-        DistanceFog {
-            color: Color::srgb(0.004, 0.055, 0.06),
-            falloff: FogFalloff::Linear {
-                start: 3.0,
-                end: 14.0,
-            },
-            ..default()
-        },
-    ));
-
-    commands.spawn((
         DirectionalLight {
             illuminance: 6_000.0,
+            shadows_enabled: false,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.9, 0.4, 0.0)),
     ));
 
-    // the shard: ico(1) keeps it chunky on purpose
-    commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(1.0).mesh().ico(1).expect("ico subdivision"))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.075, 0.478, 0.498),
-            perceptual_roughness: 0.9,
-            metallic: 0.1,
-            ..default()
-        })),
-        Spinner,
-    ));
+    let floor_mat = materials.add(StandardMaterial {
+        base_color: FLOOR_TEAL,
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    let block_mat = materials.add(StandardMaterial {
+        base_color: ARENA_TEAL,
+        perceptual_roughness: 0.9,
+        metallic: 0.1,
+        ..default()
+    });
 
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(40.0, 40.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.016, 0.11, 0.115),
-            perceptual_roughness: 1.0,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, -1.4, 0.0),
-    ));
+    let mut spawn_box = |size: Vec3, pos: Vec3, rot: Quat, mat: &Handle<StandardMaterial>| {
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::from_size(size))),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(pos).with_rotation(rot),
+            RigidBody::Static,
+            Collider::cuboid(size.x, size.y, size.z),
+        ));
+    };
+
+    // floor
+    spawn_box(
+        Vec3::new(60.0, 1.0, 60.0),
+        Vec3::new(0.0, -0.5, 0.0),
+        Quat::IDENTITY,
+        &floor_mat,
+    );
+
+    // graybox props: platforms, stairs, and surf ramps
+    spawn_box(
+        Vec3::new(6.0, 1.0, 6.0),
+        Vec3::new(-8.0, 1.5, -6.0),
+        Quat::IDENTITY,
+        &block_mat,
+    );
+    spawn_box(
+        Vec3::new(6.0, 1.0, 6.0),
+        Vec3::new(-14.0, 3.0, -12.0),
+        Quat::IDENTITY,
+        &block_mat,
+    );
+    // stair steps
+    for i in 0..6 {
+        spawn_box(
+            Vec3::new(3.0, 0.3, 1.0),
+            Vec3::new(8.0, 0.15 + i as f32 * 0.3, -4.0 - i as f32),
+            Quat::IDENTITY,
+            &block_mat,
+        );
+    }
+    // surf ramp (steep enough to slide, shallow enough to ride)
+    spawn_box(
+        Vec3::new(1.0, 14.0, 24.0),
+        Vec3::new(16.0, 3.0, 8.0),
+        Quat::from_rotation_z(std::f32::consts::FRAC_PI_3),
+        &block_mat,
+    );
+    // a few floating dream shards for orientation
+    for (x, y, z) in [(-4.0, 6.0, 4.0), (5.0, 9.0, -10.0), (-12.0, 12.0, 10.0)] {
+        spawn_box(
+            Vec3::splat(1.4),
+            Vec3::new(x, y, z),
+            Quat::from_euler(EulerRot::XYZ, 0.7, 0.4, 0.2),
+            &block_mat,
+        );
+    }
+    // perimeter walls
+    for (pos, size) in [
+        (Vec3::new(0.0, 6.0, -30.0), Vec3::new(60.0, 12.0, 1.0)),
+        (Vec3::new(0.0, 6.0, 30.0), Vec3::new(60.0, 12.0, 1.0)),
+        (Vec3::new(-30.0, 6.0, 0.0), Vec3::new(1.0, 12.0, 60.0)),
+        (Vec3::new(30.0, 6.0, 0.0), Vec3::new(1.0, 12.0, 60.0)),
+    ] {
+        spawn_box(size, pos, Quat::IDENTITY, &floor_mat);
+    }
 }
 
-fn spin(time: Res<Time>, mut query: Query<&mut Transform, With<Spinner>>) {
-    for mut transform in &mut query {
-        transform.rotate_y(0.6 * time.delta_secs());
-        transform.rotate_x(0.25 * time.delta_secs());
-    }
+fn capture_cursor(mut cursor: Single<&mut CursorOptions>) {
+    cursor.grab_mode = CursorGrabMode::Locked;
+    cursor.visible = false;
+}
+
+fn release_cursor(mut cursor: Single<&mut CursorOptions>) {
+    cursor.visible = true;
+    cursor.grab_mode = CursorGrabMode::None;
 }

@@ -5,7 +5,10 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-bevy = "0.16"
+bevy = "0.18"
+bevy_ahoy = { version = "0.1", default-features = false }
+bevy_enhanced_input = "0.24"
+avian3d = "0.6"
 
 # fast dev iterating: our code light, deps optimized
 [profile.dev]
