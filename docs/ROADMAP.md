@@ -26,12 +26,16 @@ Multiplayer: matchbox signaling (deploy `matchbox_server` to Fly.io), bevy_ggrs 
 2–4 player rooms, quick-match rooms, join links (`#room=`), second arena + second track, spawn-furthest logic, kill feed, round flow (countdown → match → results → rematch).
 - **exit:** 4-player FFA holds up through a full playlist rotation.
 
+## Phase 5½ — rhythm mode
+The beat clock is already deterministic in the sim (Phase 2/3), so this is a rules layer: on-beat fire windows, off-beat fizzle, combo cooldown scaling, bar-quantized respawns. Mode toggle in room setup.
+- **exit:** a rhythm-mode 1v1 feels like a fighting game set to the track; no desyncs (beat verdicts identical on both peers by construction).
+
 ## Phase 6 — launch
 `wasm-opt` size pass + load screen, GitHub Actions deploy to Pages, `arcade.moetransitauthority.com` DNS + CNAME, arcade cabinet section on the main site, playtest party via Discord.
 - **exit:** stranger clicks link on the site, is fragging within 30 seconds.
 
 ## Phase 7+ — dreams (backlog)
-More arenas/tracks, spectator drift-cam (LSD-style idle wander), mobile touch, WebGPU path, cosmetic unlock graffiti, in-world bandcamp jukebox.
+More arenas/tracks, spectator drift-cam (LSD-style idle wander), mobile touch, WebGPU path, cosmetic unlock graffiti, in-world bandcamp jukebox, rhythm-mode leaderboard ghosts.
 
 ---
 
