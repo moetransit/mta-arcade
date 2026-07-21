@@ -1,13 +1,19 @@
 use avian3d::prelude::*;
 use bevy::{
+    camera::RenderTarget,
+    image::ImageSampler,
     input::common_conditions::input_just_pressed,
+    pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
+    render::render_resource::{AsBindGroup, TextureFormat},
+    shader::ShaderRef,
     window::{CursorGrabMode, CursorOptions},
 };
 use bevy_ahoy::prelude::*;
 use bevy_enhanced_input::prelude::*;
 
-/// Phase 1: quake movement (bevy_ahoy) in a graybox dream arena.
+/// Phase 1: quake movement (bevy_ahoy) in a graybox dream arena, rendered PS1-style:
+/// 426x240 internal target, nearest-upscaled, vertex-snapped geometry.
 /// Click to grab the mouse, Esc to release. WASD + Space, air-strafe welcome.
 fn main() -> AppExit {
     App::new()
@@ -26,9 +32,13 @@ fn main() -> AppExit {
             PhysicsPlugins::default(),
             EnhancedInputPlugin,
             AhoyPlugins::default(),
+            MaterialPlugin::<PsxMaterial>::default(),
         ))
         .add_input_context::<PlayerInput>()
-        .add_systems(Startup, (setup_arena, setup_player))
+        .add_systems(
+            Startup,
+            (setup_render_target, setup_arena, setup_player).chain(),
+        )
         .add_systems(
             Update,
             (
@@ -43,14 +53,63 @@ const DEEP_TEAL: Color = Color::srgb(0.004, 0.055, 0.06);
 const ARENA_TEAL: Color = Color::srgb(0.075, 0.478, 0.498);
 const FLOOR_TEAL: Color = Color::srgb(0.016, 0.11, 0.115);
 
+/// Internal PS1 framebuffer resolution (16:9-ish 240p).
+const INTERNAL_WIDTH: u32 = 426;
+const INTERNAL_HEIGHT: u32 = 240;
+
+/// StandardMaterial + PS1 vertex snapping.
+type PsxMaterial = ExtendedMaterial<StandardMaterial, PsxExtension>;
+
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+struct PsxExtension {}
+
+impl MaterialExtension for PsxExtension {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/psx.wgsl".into()
+    }
+}
+
+#[derive(Resource, Clone)]
+struct PsxTarget(Handle<Image>);
+
 #[derive(Component, Default)]
 struct PlayerInput;
 
-fn setup_player(mut commands: Commands) {
+fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    // no view-format reinterpretation: WebGL2 lacks VIEW_FORMATS support
+    let mut image = Image::new_target_texture(
+        INTERNAL_WIDTH,
+        INTERNAL_HEIGHT,
+        TextureFormat::Rgba8UnormSrgb,
+        None,
+    );
+    image.sampler = ImageSampler::nearest();
+    let handle = images.add(image);
+    commands.insert_resource(PsxTarget(handle.clone()));
+
+    // fullscreen chunky upscale of the internal framebuffer
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1,
+            ..default()
+        },
+    ));
+    commands.spawn((
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        ImageNode::new(handle),
+    ));
+}
+
+fn setup_player(mut commands: Commands, target: Res<PsxTarget>) {
     let player = commands
         .spawn((
             CharacterController {
-                // tuning pass 1: faster base, dashdance-crisp reversals
+                // tuning passes 1-2 (playtested): fast base, dashdance-crisp reversals
                 // (high accel converges onto the new wish dir fast; high friction
                 //  kills stale velocity fast; buffered jumps keep bhop alive)
                 speed: 17.5,
@@ -89,6 +148,8 @@ fn setup_player(mut commands: Commands) {
 
     commands.spawn((
         Camera3d::default(),
+        RenderTarget::Image(target.0.clone().into()),
+        Msaa::Off,
         CharacterControllerCameraOf::new(player),
         DistanceFog {
             color: DEEP_TEAL,
@@ -104,7 +165,7 @@ fn setup_player(mut commands: Commands) {
 fn setup_arena(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<PsxMaterial>>,
 ) {
     commands.spawn((
         DirectionalLight {
@@ -115,19 +176,10 @@ fn setup_arena(
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.9, 0.4, 0.0)),
     ));
 
-    let floor_mat = materials.add(StandardMaterial {
-        base_color: FLOOR_TEAL,
-        perceptual_roughness: 1.0,
-        ..default()
-    });
-    let block_mat = materials.add(StandardMaterial {
-        base_color: ARENA_TEAL,
-        perceptual_roughness: 0.9,
-        metallic: 0.1,
-        ..default()
-    });
+    let floor_mat = materials.add(psx(FLOOR_TEAL, 1.0, 0.0));
+    let block_mat = materials.add(psx(ARENA_TEAL, 0.9, 0.1));
 
-    let mut spawn_box = |size: Vec3, pos: Vec3, rot: Quat, mat: &Handle<StandardMaterial>| {
+    let mut spawn_box = |size: Vec3, pos: Vec3, rot: Quat, mat: &Handle<PsxMaterial>| {
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::from_size(size))),
             MeshMaterial3d(mat.clone()),
@@ -191,6 +243,18 @@ fn setup_arena(
         (Vec3::new(30.0, 6.0, 0.0), Vec3::new(1.0, 12.0, 60.0)),
     ] {
         spawn_box(size, pos, Quat::IDENTITY, &floor_mat);
+    }
+}
+
+fn psx(color: Color, roughness: f32, metallic: f32) -> PsxMaterial {
+    ExtendedMaterial {
+        base: StandardMaterial {
+            base_color: color,
+            perceptual_roughness: roughness,
+            metallic,
+            ..default()
+        },
+        extension: PsxExtension::default(),
     }
 }
 
