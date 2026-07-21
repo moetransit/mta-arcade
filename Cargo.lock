@@ -3568,6 +3568,8 @@ dependencies = [
  "bevy",
  "bevy_ahoy",
  "bevy_enhanced_input",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

@@ -12,6 +12,8 @@ use bevy::{
 use bevy_ahoy::prelude::*;
 use bevy_enhanced_input::prelude::*;
 
+mod vibe;
+
 /// Phase 1: quake movement (bevy_ahoy) in a graybox dream arena, rendered PS1-style:
 /// 426x240 internal target, nearest-upscaled, vertex-snapped geometry.
 /// Click to grab the mouse, Esc to release. WASD + Space, air-strafe welcome.
@@ -33,6 +35,7 @@ fn main() -> AppExit {
             EnhancedInputPlugin,
             AhoyPlugins::default(),
             MaterialPlugin::<PsxMaterial>::default(),
+            vibe::VibePlugin,
         ))
         .add_input_context::<PlayerInput>()
         .add_systems(
@@ -44,6 +47,7 @@ fn main() -> AppExit {
             (
                 capture_cursor.run_if(input_just_pressed(MouseButton::Left)),
                 release_cursor.run_if(input_just_pressed(KeyCode::Escape)),
+                vibe_visuals,
             ),
         )
         .run()
@@ -61,7 +65,11 @@ const INTERNAL_HEIGHT: u32 = 240;
 type PsxMaterial = ExtendedMaterial<StandardMaterial, PsxExtension>;
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
-struct PsxExtension {}
+struct PsxExtension {
+    /// x: bass, y: lowmid, z: highmid, w: treble — fed by the vibe layer
+    #[uniform(100)]
+    bands: Vec4,
+}
 
 impl MaterialExtension for PsxExtension {
     fn vertex_shader() -> ShaderRef {
@@ -261,6 +269,36 @@ fn psx(color: Color, roughness: f32, metallic: f32) -> PsxMaterial {
 fn capture_cursor(mut cursor: Single<&mut CursorOptions>) {
     cursor.grab_mode = CursorGrabMode::Locked;
     cursor.visible = false;
+    // browsers only allow audio to start inside a user gesture
+    vibe::ensure_audio_started();
+}
+
+/// Cosmetic audio reactivity: materials breathe, fog inhales, light hits on beat.
+fn vibe_visuals(
+    bands: Res<vibe::AudioBands>,
+    clock: Res<vibe::BeatClock>,
+    mut materials: ResMut<Assets<PsxMaterial>>,
+    mut fogs: Query<&mut DistanceFog>,
+    mut lights: Query<&mut DirectionalLight>,
+) {
+    let b = Vec4::new(bands.bass, bands.lowmid, bands.highmid, bands.treble);
+    for (_, mat) in materials.iter_mut() {
+        mat.extension.bands = b;
+    }
+    for mut fog in &mut fogs {
+        if let FogFalloff::Linear { start, end } = &mut fog.falloff {
+            *start = 12.0 - bands.bass * 7.0;
+            *end = 60.0 - bands.bass * 15.0;
+        }
+    }
+    let pulse = if clock.playing {
+        (1.0 - clock.beat_phase()).powi(3)
+    } else {
+        0.0
+    };
+    for mut light in &mut lights {
+        light.illuminance = 6_000.0 * (1.0 + 0.6 * pulse + 0.4 * bands.bass);
+    }
 }
 
 fn release_cursor(mut cursor: Single<&mut CursorOptions>) {
