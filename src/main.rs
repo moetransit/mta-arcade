@@ -40,7 +40,13 @@ fn main() -> AppExit {
         .add_input_context::<PlayerInput>()
         .add_systems(
             Startup,
-            (setup_render_target, setup_arena, setup_player).chain(),
+            (
+                setup_render_target,
+                setup_arena,
+                setup_player,
+                setup_now_playing,
+            )
+                .chain(),
         )
         .add_systems(
             Update,
@@ -48,6 +54,7 @@ fn main() -> AppExit {
                 capture_cursor.run_if(input_just_pressed(MouseButton::Left)),
                 release_cursor.run_if(input_just_pressed(KeyCode::Escape)),
                 vibe_visuals,
+                show_now_playing,
             ),
         )
         .run()
@@ -111,6 +118,40 @@ fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>
         },
         ImageNode::new(handle),
     ));
+}
+
+#[derive(Component)]
+struct NowPlayingLabel;
+
+fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
+    commands.spawn((
+        Text::new(format!("♪ {} — {}", now.artist, now.title)),
+        TextFont {
+            font_size: 13.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.53, 0.81, 0.80)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(10.0),
+            bottom: Val::Px(8.0),
+            ..default()
+        },
+        Visibility::Hidden,
+        NowPlayingLabel,
+    ));
+}
+
+/// Reveal the now-playing tag once audio actually starts.
+fn show_now_playing(
+    clock: Res<vibe::BeatClock>,
+    mut label: Query<&mut Visibility, With<NowPlayingLabel>>,
+) {
+    if clock.playing {
+        for mut vis in &mut label {
+            *vis = Visibility::Visible;
+        }
+    }
 }
 
 fn setup_player(mut commands: Commands, target: Res<PsxTarget>) {

@@ -18,30 +18,36 @@ pub struct AudioBands {
     pub treble: f32,
 }
 
-/// Track clock for cosmetic beat pulses. `time_s` is the audio element's
-/// playhead; the placeholder grid is a constant BPM from t=0.
+/// The track we ship with arena #1. Audio streams as an asset; the analyzed
+/// beat grid is embedded in the binary (10KB) so cosmetics never wait on a fetch.
+const TRACK_SRC: &str = "assets/tracks/disco_machine_gun.ogg";
+const BEATS_JSON: &str = include_str!("../assets/tracks/disco_machine_gun.beats.json");
+
+/// What's currently playing, for the UI.
 #[derive(Resource)]
-pub struct BeatClock {
-    pub bpm: f32,
-    pub time_s: f64,
-    pub playing: bool,
+pub struct NowPlaying {
+    pub title: String,
+    pub artist: String,
 }
 
-impl Default for BeatClock {
-    fn default() -> Self {
-        Self {
-            bpm: 140.0,
-            time_s: 0.0,
-            playing: false,
-        }
-    }
+/// Track clock for cosmetic beat pulses. `time_s` is the audio element's
+/// playhead, judged against the track's analyzed beat grid.
+#[derive(Resource, Default)]
+pub struct BeatClock {
+    pub beat_times: Vec<f64>,
+    pub time_s: f64,
+    pub playing: bool,
 }
 
 impl BeatClock {
     /// 0 at each beat, rising to 1 just before the next: a saw for pulses.
     pub fn beat_phase(&self) -> f32 {
-        let spb = 60.0 / self.bpm as f64;
-        ((self.time_s % spb) / spb) as f32
+        let i = self.beat_times.partition_point(|&b| b <= self.time_s);
+        if i == 0 || i >= self.beat_times.len() {
+            return 1.0;
+        }
+        let (prev, next) = (self.beat_times[i - 1], self.beat_times[i]);
+        (((self.time_s - prev) / (next - prev)).clamp(0.0, 1.0)) as f32
     }
 }
 
@@ -49,8 +55,23 @@ pub struct VibePlugin;
 
 impl Plugin for VibePlugin {
     fn build(&self, app: &mut App) {
+        let meta: serde_json::Value =
+            serde_json::from_str(BEATS_JSON).expect("valid beats json");
+        let beat_times = meta["beat_times"]
+            .as_array()
+            .expect("beat_times array")
+            .iter()
+            .filter_map(|v| v.as_f64())
+            .collect();
         app.init_resource::<AudioBands>()
-            .init_resource::<BeatClock>()
+            .insert_resource(BeatClock {
+                beat_times,
+                ..default()
+            })
+            .insert_resource(NowPlaying {
+                title: meta["title"].as_str().unwrap_or("?").to_string(),
+                artist: meta["artist"].as_str().unwrap_or("?").to_string(),
+            })
             .add_systems(Update, sample_audio);
     }
 }
@@ -125,7 +146,7 @@ mod web {
     }
 
     fn init() -> Result<AudioState, wasm_bindgen::JsValue> {
-        let element = HtmlAudioElement::new_with_src("assets/tracks/placeholder_140.ogg")?;
+        let element = HtmlAudioElement::new_with_src(crate::vibe::TRACK_SRC)?;
         element.set_loop(true);
         let ctx = AudioContext::new()?;
         let source = ctx.create_media_element_source(&element)?;
