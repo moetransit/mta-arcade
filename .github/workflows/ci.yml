@@ -18,8 +18,7 @@ jobs:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: bevy native deps
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo check --target wasm32-unknown-unknown
+      # clippy against the shipping target: wasm needs no native system libs
+      # (bevy 0.18 native linux wants wayland/alsa/udev dev packages)
+      - run: cargo clippy --all-targets --target wasm32-unknown-unknown -- -D warnings
