@@ -110,6 +110,7 @@ fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>
             order: 1,
             ..default()
         },
+        IsDefaultUiCamera,
     ));
     commands.spawn((
         Node {
@@ -118,6 +119,7 @@ fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>
             ..default()
         },
         ImageNode::new(handle),
+        GlobalZIndex(0),
     ));
 }
 
@@ -152,6 +154,7 @@ fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
             ..default()
         },
         Visibility::Hidden,
+        GlobalZIndex(1),
         NowPlayingLabel,
     ));
 
@@ -168,6 +171,7 @@ fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.05, 0.05, 0.65)),
+            GlobalZIndex(1),
         ))
         .with_children(|lane| {
             lane.spawn((
