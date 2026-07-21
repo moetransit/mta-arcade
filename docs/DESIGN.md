@@ -31,13 +31,23 @@
 - **Respawn:** instant, at the spawn point furthest from your killer.
 - **Arenas:** small (30s to cross), vertical, wrap-around teleporters. One arena per track; arena mood = track mood.
 - **Sessions:** matches are rooms of 2–4. Solo visitors get a target-practice dream (same arena, floating targets on the beat) so the link is never dead.
-- **Mode 2: RHYTHM MODE.** Same arena, same railgun — but the gun is only *live* in a window around each beat (±1 sim tick tuned per track, ~±80ms). Off-beat shots fizzle with a sad visual. Consecutive on-beat frags build a combo that shortens the beam cooldown; dropping the combo resets it. Respawns quantize to the next bar line. Firefights become rhythm duels: everyone shares the same deterministic beat clock (`beats.json` + sim tick — see §5), so "was that on beat?" has one answer on every peer. Works in FFA and solo target practice.
+- **Mode 2: RHYTHM MODE (bemani scoring).** Same arena, same railgun — the gun always fires, but *when* you kill decides what it's worth, DDR/IIDX style. Kill timing is judged against the track's beat grid (`beats.json` + sim tick, see §5) at 60Hz:
+
+  | judgment | window | points |
+  |---|---|---|
+  | **MARVELOUS** (frame-perfect on-beat) | ±1 tick (~±16ms) of a beat | **5** |
+  | **MARVELOUS·OFF** (frame-perfect on the offbeat) | ±1 tick of the eighth-note between beats | **4** |
+  | **GREAT** | ±3 ticks (~±50ms) of beat or offbeat | **2** |
+  | off-rhythm | anything else | **1** |
+
+  Judgment windows are expressed in sim ticks so every peer computes the identical verdict (rollback-safe by construction). Win = first to 30 points or highest score at track end. Respawns quantize to the next bar line so re-entry lands on the downbeat. Judgment flash (MARVELOUS in big pixel type) is local cosmetic feedback; the points are sim truth. Per-track window tuning lives in `beats.json` alongside the grid.
 
 ## 4. Tech stack
 
 | Layer | Choice | Why |
 |---|---|---|
-| Engine | **Bevy 0.16** (Rust) | ECS fits rollback netcode; first-class wasm support |
+| Engine | **Bevy 0.18** (Rust) | ECS fits rollback netcode; first-class wasm support |
+| Movement | **bevy_ahoy** + **Avian** physics + **bevy_enhanced_input** | Quake/Source kinematic character controller (air-strafe, bhop, surf) — fixed-timestep native, which is exactly what rollback needs |
 | Target | `wasm32-unknown-unknown`, WebGL2 baseline | WebGL2 = works everywhere today; WebGPU as progressive upgrade later |
 | Bundler | **Trunk** | zero-config wasm build + dev server for Bevy |
 | Netcode | **bevy_ggrs** (rollback) + **bevy_matchbox** (WebRTC p2p) | the proven browser-multiplayer stack for Bevy; P2P = no game servers to run |
