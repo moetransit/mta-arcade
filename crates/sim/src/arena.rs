@@ -43,6 +43,20 @@ pub fn graybox() -> Vec<Aabb> {
     boxes
 }
 
+/// The surf ramp: an oriented box (rotated around z), resolved separately
+/// from the AABB list via sphere-sample collision in `movement`.
+pub struct Ramp {
+    pub center: [f32; 3],
+    pub half: [f32; 3],
+    pub rot_z: f32,
+}
+
+pub const RAMP: Ramp = Ramp {
+    center: [16.0, 3.0, 8.0],
+    half: [0.5, 7.0, 12.0],
+    rot_z: core::f32::consts::FRAC_PI_3,
+};
+
 /// Spawn points, far apart, facing the middle.
 /// (yaw 0 faces -z; the +z spawn needs yaw 0, the -z spawn needs yaw pi.)
 pub const SPAWNS: [([f32; 3], f32); 2] = [

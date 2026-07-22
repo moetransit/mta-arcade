@@ -3,7 +3,7 @@
 //! Pure `step` function over POD state: rollback snapshots it by clone,
 //! peers re-derive identical trajectories from identical inputs.
 
-use crate::arena::Aabb;
+use crate::arena::{Aabb, RAMP};
 
 pub const DT: f32 = 1.0 / crate::TICK_HZ as f32;
 
@@ -127,10 +127,53 @@ pub fn step(state: &mut PlayerState, input: &NetInput, arena: &[Aabb]) {
         state.pos[axis] += state.vel[axis] * DT;
         resolve_axis(state, axis, arena);
     }
+    resolve_ramp(state);
     // safety floor: never fall out of the world
     if state.pos[1] < -20.0 {
         state.pos = [0.0, 2.0, 0.0];
         state.vel = [0.0; 3];
+    }
+}
+
+/// Collide two sample spheres (feet, head) against the oriented ramp box:
+/// closest-point push-out along the surface normal, velocity deflected to
+/// slide. Walkable if the touched face points mostly up.
+fn resolve_ramp(state: &mut PlayerState) {
+    const R: f32 = 0.42;
+    let (s, c) = (RAMP.rot_z.sin(), RAMP.rot_z.cos());
+    for h in [0.45_f32, 1.35] {
+        let p = [state.pos[0], state.pos[1] + h, state.pos[2]];
+        // world -> ramp local (rotate by -rot_z around z, about the center)
+        let dx = p[0] - RAMP.center[0];
+        let dy = p[1] - RAMP.center[1];
+        let local = [c * dx + s * dy, -s * dx + c * dy, p[2] - RAMP.center[2]];
+        let q = [
+            local[0].clamp(-RAMP.half[0], RAMP.half[0]),
+            local[1].clamp(-RAMP.half[1], RAMP.half[1]),
+            local[2].clamp(-RAMP.half[2], RAMP.half[2]),
+        ];
+        let d = [local[0] - q[0], local[1] - q[1], local[2] - q[2]];
+        let dist2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        if !(1e-12..R * R).contains(&dist2) {
+            continue;
+        }
+        let dist = dist2.sqrt();
+        let nl = [d[0] / dist, d[1] / dist, d[2] / dist];
+        // local -> world normal (rotate by +rot_z)
+        let n = [c * nl[0] - s * nl[1], s * nl[0] + c * nl[1], nl[2]];
+        let push = R - dist;
+        for (p, ni) in state.pos.iter_mut().zip(&n) {
+            *p += ni * push;
+        }
+        let vn = state.vel[0] * n[0] + state.vel[1] * n[1] + state.vel[2] * n[2];
+        if vn < 0.0 {
+            for (v, ni) in state.vel.iter_mut().zip(&n) {
+                *v -= ni * vn;
+            }
+        }
+        if n[1] > 0.75 {
+            state.grounded = true;
+        }
     }
 }
 
@@ -220,6 +263,40 @@ mod tests {
             apex = apex.max(p.pos[1]);
         }
         assert!((1.5..2.1).contains(&apex), "apex = {apex}");
+    }
+
+    #[test]
+    fn ramp_underside_blocks() {
+        let arena = graybox();
+        let mut p = PlayerState::spawn([10.0, 0.0, 8.0], 0.0);
+        for _ in 0..30 {
+            step(&mut p, &NetInput::default(), &arena);
+        }
+        // walk +x into the space under the slope for 4 seconds
+        let input = NetInput {
+            buttons: BTN_RIGHT,
+            ..Default::default()
+        };
+        for _ in 0..240 {
+            step(&mut p, &input, &arena);
+        }
+        // blocked by the underside; never through to the far side
+        assert!(p.pos[0] < 20.0, "passed through ramp: pos {:?}", p.pos);
+    }
+
+    #[test]
+    fn ramp_top_face_carries_you() {
+        let arena = graybox();
+        // drop onto the slope from above (slope surface at x=14 is y~4.7)
+        let mut p = PlayerState::spawn([14.0, 8.0, 8.0], 0.0);
+        for _ in 0..180 {
+            step(&mut p, &NetInput::default(), &arena);
+        }
+        assert!(
+            p.pos[1] > 2.0,
+            "fell through the ramp top face: pos {:?}",
+            p.pos
+        );
     }
 
     /// Golden trajectory hash: the movement twin of the judgment test.
