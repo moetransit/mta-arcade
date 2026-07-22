@@ -8,9 +8,11 @@
 
 pub mod arena;
 pub mod judgment;
+pub mod match_sim;
 pub mod movement;
 
 pub use judgment::{judge, BeatGrid, Judgment};
+pub use match_sim::{step_match, MatchState};
 pub use movement::{step, NetInput, PlayerState};
 
 /// Fixed simulation rate. All gameplay time is ticks of this.

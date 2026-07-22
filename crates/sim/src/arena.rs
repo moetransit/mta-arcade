@@ -44,7 +44,8 @@ pub fn graybox() -> Vec<Aabb> {
 }
 
 /// Spawn points, far apart, facing the middle.
+/// (yaw 0 faces -z; the +z spawn needs yaw 0, the -z spawn needs yaw pi.)
 pub const SPAWNS: [([f32; 3], f32); 2] = [
-    ([0.0, 1.0, 8.0], core::f32::consts::PI),
-    ([0.0, 1.0, -8.0], 0.0),
+    ([0.0, 1.0, 8.0], 0.0),
+    ([0.0, 1.0, -8.0], core::f32::consts::PI),
 ];
