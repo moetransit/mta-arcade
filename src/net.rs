@@ -130,6 +130,7 @@ pub fn run(room_url: String) -> AppExit {
                 crate::setup_now_playing,
                 setup_net,
                 setup_sim_grid,
+                crate::hide_loading_screen,
             )
                 .chain(),
         )
