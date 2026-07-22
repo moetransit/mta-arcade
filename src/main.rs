@@ -12,6 +12,8 @@ use bevy::{
 use bevy_ahoy::prelude::*;
 use bevy_enhanced_input::prelude::*;
 
+mod vibe;
+
 /// Phase 1: quake movement (bevy_ahoy) in a graybox dream arena, rendered PS1-style:
 /// 426x240 internal target, nearest-upscaled, vertex-snapped geometry.
 /// Click to grab the mouse, Esc to release. WASD + Space, air-strafe welcome.
@@ -33,17 +35,28 @@ fn main() -> AppExit {
             EnhancedInputPlugin,
             AhoyPlugins::default(),
             MaterialPlugin::<PsxMaterial>::default(),
+            vibe::VibePlugin,
         ))
         .add_input_context::<PlayerInput>()
         .add_systems(
             Startup,
-            (setup_render_target, setup_arena, setup_player).chain(),
+            (
+                setup_render_target,
+                setup_arena,
+                setup_player,
+                setup_now_playing,
+            )
+                .chain(),
         )
         .add_systems(
             Update,
             (
                 capture_cursor.run_if(input_just_pressed(MouseButton::Left)),
                 release_cursor.run_if(input_just_pressed(KeyCode::Escape)),
+                vibe_visuals,
+                show_now_playing,
+                update_iidx,
+                tap_calibration.run_if(input_just_pressed(KeyCode::KeyT)),
             ),
         )
         .run()
@@ -61,7 +74,11 @@ const INTERNAL_HEIGHT: u32 = 240;
 type PsxMaterial = ExtendedMaterial<StandardMaterial, PsxExtension>;
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
-struct PsxExtension {}
+struct PsxExtension {
+    /// x: bass, y: lowmid, z: highmid, w: treble — fed by the vibe layer
+    #[uniform(100)]
+    bands: Vec4,
+}
 
 impl MaterialExtension for PsxExtension {
     fn vertex_shader() -> ShaderRef {
@@ -94,6 +111,7 @@ fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>
             order: 1,
             ..default()
         },
+        IsDefaultUiCamera,
     ));
     commands.spawn((
         Node {
@@ -102,7 +120,183 @@ fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>
             ..default()
         },
         ImageNode::new(handle),
+        GlobalZIndex(0),
     ));
+}
+
+#[derive(Component)]
+struct NowPlayingLabel;
+
+/// The IIDX clock: a lane where notes cross the judgment line exactly on
+/// each analyzed beat — an eyeball test of beat-grid accuracy vs your ears.
+#[derive(Component)]
+struct IidxNote(usize);
+
+#[derive(Component)]
+struct IidxLine;
+
+#[derive(Component)]
+struct CalLabel;
+
+const IIDX_LANE_W: f32 = 200.0;
+const IIDX_LINE_X: f32 = 32.0;
+const IIDX_PX_PER_SEC: f32 = 110.0;
+const IIDX_NOTE_POOL: usize = 8;
+
+fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
+    commands.spawn((
+        Text::new(format!("♪ {} — {}", now.artist, now.title)),
+        TextFont {
+            font_size: 13.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.53, 0.81, 0.80)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(10.0),
+            bottom: Val::Px(8.0),
+            ..default()
+        },
+        Visibility::Hidden,
+        GlobalZIndex(1),
+        NowPlayingLabel,
+    ));
+
+    // iidx clock lane, bottom-right
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(10.0),
+                bottom: Val::Px(8.0),
+                width: Val::Px(IIDX_LANE_W),
+                height: Val::Px(30.0),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.05, 0.05, 0.65)),
+            GlobalZIndex(1),
+        ))
+        .with_children(|lane| {
+            lane.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(IIDX_LINE_X),
+                    top: Val::Px(2.0),
+                    width: Val::Px(2.0),
+                    height: Val::Px(26.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(1.0, 1.0, 1.0)),
+                IidxLine,
+            ));
+            lane.spawn((
+                Text::new("T = tap to beat"),
+                TextFont {
+                    font_size: 9.0,
+                    ..default()
+                },
+                TextColor(Color::srgba(0.53, 0.81, 0.80, 0.7)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(4.0),
+                    top: Val::Px(2.0),
+                    ..default()
+                },
+                CalLabel,
+            ));
+            for i in 0..IIDX_NOTE_POOL {
+                lane.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(-10.0),
+                        top: Val::Px(5.0),
+                        width: Val::Px(4.0),
+                        height: Val::Px(20.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.53, 0.81, 0.80)),
+                    Visibility::Hidden,
+                    IidxNote(i),
+                ));
+            }
+        });
+}
+
+/// Tap calibration: press T on the beat; the median tap offset becomes a
+/// per-device correction applied to the whole beat clock (and persisted).
+fn tap_calibration(
+    mut clock: ResMut<vibe::BeatClock>,
+    mut label: Query<&mut Text, With<CalLabel>>,
+) {
+    if !clock.playing {
+        return;
+    }
+    let taps = clock.taps.len() + 1;
+    if let Some(median) = clock.record_tap() {
+        vibe::save_calibration(median);
+        for mut text in &mut label {
+            text.0 = format!("cal {:+.0}ms ({} taps)", median * 1000.0, taps);
+        }
+    } else {
+        for mut text in &mut label {
+            text.0 = format!("tap {taps}/4...");
+        }
+    }
+}
+
+/// Scroll notes right-to-left so each crosses the line at its exact beat time.
+fn update_iidx(
+    clock: Res<vibe::BeatClock>,
+    mut notes: Query<(&IidxNote, &mut Node, &mut Visibility), Without<IidxLine>>,
+    mut line: Query<&mut BackgroundColor, With<IidxLine>>,
+) {
+    if !clock.playing {
+        return;
+    }
+    let now = clock.effective_time();
+    let lookahead = ((IIDX_LANE_W - IIDX_LINE_X) / IIDX_PX_PER_SEC) as f64;
+    let lookbehind = (IIDX_LINE_X / IIDX_PX_PER_SEC) as f64;
+
+    let start = clock.beat_times.partition_point(|&b| b < now - lookbehind);
+    let upcoming: Vec<f64> = clock
+        .beat_times
+        .iter()
+        .copied()
+        .skip(start)
+        .take_while(|&b| b < now + lookahead)
+        .collect();
+
+    for (note, mut node, mut vis) in &mut notes {
+        if let Some(&beat) = upcoming.get(note.0) {
+            node.left = Val::Px(IIDX_LINE_X + ((beat - now) as f32) * IIDX_PX_PER_SEC - 2.0);
+            *vis = Visibility::Visible;
+        } else {
+            *vis = Visibility::Hidden;
+        }
+    }
+
+    // line flashes white on the beat, decays to teal
+    let pulse = (1.0 - clock.beat_phase()).powi(3);
+    for mut bg in &mut line {
+        bg.0 = Color::srgb(
+            0.53 + 0.47 * pulse,
+            0.81 + 0.19 * pulse,
+            0.80 + 0.20 * pulse,
+        );
+    }
+}
+
+/// Reveal the now-playing tag once audio actually starts.
+fn show_now_playing(
+    clock: Res<vibe::BeatClock>,
+    mut label: Query<&mut Visibility, With<NowPlayingLabel>>,
+) {
+    if clock.playing {
+        for mut vis in &mut label {
+            *vis = Visibility::Visible;
+        }
+    }
 }
 
 fn setup_player(mut commands: Commands, target: Res<PsxTarget>) {
@@ -261,6 +455,36 @@ fn psx(color: Color, roughness: f32, metallic: f32) -> PsxMaterial {
 fn capture_cursor(mut cursor: Single<&mut CursorOptions>) {
     cursor.grab_mode = CursorGrabMode::Locked;
     cursor.visible = false;
+    // browsers only allow audio to start inside a user gesture
+    vibe::ensure_audio_started();
+}
+
+/// Cosmetic audio reactivity: materials breathe, fog inhales, light hits on beat.
+fn vibe_visuals(
+    bands: Res<vibe::AudioBands>,
+    clock: Res<vibe::BeatClock>,
+    mut materials: ResMut<Assets<PsxMaterial>>,
+    mut fogs: Query<&mut DistanceFog>,
+    mut lights: Query<&mut DirectionalLight>,
+) {
+    let b = Vec4::new(bands.bass, bands.lowmid, bands.highmid, bands.treble);
+    for (_, mat) in materials.iter_mut() {
+        mat.extension.bands = b;
+    }
+    for mut fog in &mut fogs {
+        if let FogFalloff::Linear { start, end } = &mut fog.falloff {
+            *start = 12.0 - bands.bass * 7.0;
+            *end = 60.0 - bands.bass * 15.0;
+        }
+    }
+    let pulse = if clock.playing {
+        (1.0 - clock.beat_phase()).powi(3)
+    } else {
+        0.0
+    };
+    for mut light in &mut lights {
+        light.illuminance = 6_000.0 * (1.0 + 0.6 * pulse + 0.4 * bands.bass);
+    }
 }
 
 fn release_cursor(mut cursor: Single<&mut CursorOptions>) {
