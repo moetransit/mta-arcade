@@ -25,11 +25,20 @@ const TARGET_LIFETIME_S: f32 = 8.0;
 
 pub struct GunPlugin;
 
+/// Netplay flips this off when a match starts (practice is lobby-only there).
+#[derive(Resource)]
+pub struct GunEnabled(pub bool);
+
+fn gun_enabled(enabled: Res<GunEnabled>) -> bool {
+    enabled.0
+}
+
 impl Plugin for GunPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Score>()
             .init_resource::<Cooldown>()
             .init_resource::<TargetSpawner>()
+            .insert_resource(GunEnabled(true))
             .add_systems(Startup, setup_gun_ui)
             .add_systems(
                 Update,
@@ -41,8 +50,21 @@ impl Plugin for GunPlugin {
                     fade_beams,
                     fade_judgments,
                     update_score_text,
-                ),
+                )
+                    .run_if(gun_enabled),
             );
+    }
+}
+
+/// Remove all practice entities (targets, beams, judgment popups).
+pub fn cleanup_practice(
+    mut commands: Commands,
+    targets: Query<Entity, With<Target>>,
+    beams: Query<Entity, With<Beam>>,
+    judgments: Query<Entity, With<JudgmentText>>,
+) {
+    for e in targets.iter().chain(beams.iter()).chain(judgments.iter()) {
+        commands.entity(e).despawn();
     }
 }
 
@@ -63,18 +85,18 @@ struct TargetSpawner {
 }
 
 #[derive(Component)]
-struct Target {
+pub struct Target {
     born: f32,
     seed: f32,
 }
 
 #[derive(Component)]
-struct Beam {
+pub struct Beam {
     ttl: f32,
 }
 
 #[derive(Component)]
-struct JudgmentText {
+pub struct JudgmentText {
     ttl: f32,
 }
 

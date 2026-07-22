@@ -15,7 +15,7 @@ use bevy_ggrs::{prelude::*, LocalInputs, LocalPlayers};
 use bevy_matchbox::prelude::*;
 use mta_sim::{
     arena::{graybox, Aabb, SPAWNS},
-    movement::{BTN_BACK, BTN_FIRE, BTN_FWD, BTN_JUMP, BTN_LEFT, BTN_RIGHT, EYE_HEIGHT},
+    movement::{BTN_BACK, BTN_FIRE, BTN_FWD, BTN_JUMP, BTN_LEFT, BTN_RIGHT, DT, EYE_HEIGHT},
     NetInput, PlayerState,
 };
 
@@ -67,6 +67,10 @@ struct NetPlayer {
 #[derive(Component)]
 struct LobbyText;
 
+/// Sim-driven local player for warming up while the lobby waits.
+#[derive(Component)]
+struct PracticePlayer;
+
 pub fn run(room_url: String) -> AppExit {
     App::new()
         .insert_resource(ClearColor(crate::DEEP_TEAL))
@@ -84,6 +88,7 @@ pub fn run(room_url: String) -> AppExit {
             avian3d::prelude::PhysicsPlugins::default(),
             MaterialPlugin::<crate::PsxMaterial>::default(),
             crate::vibe::VibePlugin,
+            crate::gun::GunPlugin,
             GgrsPlugin::<Config>::default(),
         ))
         .rollback_component_with_clone::<Sim>()
@@ -96,8 +101,14 @@ pub fn run(room_url: String) -> AppExit {
             Startup,
             (crate::setup_render_target, crate::setup_arena, setup_net).chain(),
         )
-        .add_systems(Update, lobby.run_if(in_state(NetState::Lobby)))
-        .add_systems(OnEnter(NetState::InGame), spawn_players)
+        .add_systems(
+            Update,
+            (lobby, practice_move, practice_camera).run_if(in_state(NetState::Lobby)),
+        )
+        .add_systems(
+            OnEnter(NetState::InGame),
+            (end_practice, crate::gun::cleanup_practice, spawn_players),
+        )
         .add_systems(GgrsSchedule, advance_sim)
         .add_systems(
             Update,
@@ -155,6 +166,89 @@ fn setup_net(mut commands: Commands, url: Res<RoomUrl>, target: Res<crate::PsxTa
 
     info!("connecting to matchbox: {}", url.0);
     commands.insert_resource(MatchboxSocket::new_unreliable(url.0.clone()));
+
+    // warm-up: a sim-driven practice player + the target dream (gun plugin)
+    let (pos, yaw) = SPAWNS[0];
+    commands.spawn((PracticePlayer, Sim(PlayerState::spawn(pos, yaw))));
+}
+
+/// Build a NetInput from live devices — shared by practice and netplay input.
+fn build_input(
+    keys: &ButtonInput<KeyCode>,
+    buttons: &ButtonInput<MouseButton>,
+    look: &Look,
+) -> NetInput {
+    let mut b = 0u8;
+    if keys.pressed(KeyCode::KeyW) {
+        b |= BTN_FWD;
+    }
+    if keys.pressed(KeyCode::KeyS) {
+        b |= BTN_BACK;
+    }
+    if keys.pressed(KeyCode::KeyA) {
+        b |= BTN_LEFT;
+    }
+    if keys.pressed(KeyCode::KeyD) {
+        b |= BTN_RIGHT;
+    }
+    if keys.pressed(KeyCode::Space) {
+        b |= BTN_JUMP;
+    }
+    if buttons.pressed(MouseButton::Left) {
+        b |= BTN_FIRE;
+    }
+    NetInput {
+        buttons: b,
+        yaw_mrad: (look.yaw * 1000.0) as i16,
+        pitch_mrad: (look.pitch * 1000.0) as i16,
+    }
+}
+
+/// Advance the practice player on the sim at a fixed 60hz, from live input.
+fn practice_move(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    look: Res<Look>,
+    arena: Res<NetArena>,
+    mut acc: Local<f32>,
+    mut player: Query<&mut Sim, With<PracticePlayer>>,
+) {
+    let Ok(mut sim) = player.single_mut() else {
+        return;
+    };
+    let input = build_input(&keys, &buttons, &look);
+    *acc += time.delta_secs().min(0.25);
+    while *acc >= DT {
+        mta_sim::step(&mut sim.0, &input, &arena.0);
+        *acc -= DT;
+    }
+}
+
+fn practice_camera(
+    look: Res<Look>,
+    player: Query<&Sim, With<PracticePlayer>>,
+    mut camera: Query<&mut Transform, With<Camera3d>>,
+) {
+    let Ok(sim) = player.single() else {
+        return;
+    };
+    let s = &sim.0;
+    for mut tf in &mut camera {
+        tf.translation = Vec3::new(s.pos[0], s.pos[1] + EYE_HEIGHT, s.pos[2]);
+        tf.rotation = Quat::from_rotation_y(look.yaw) * Quat::from_rotation_x(look.pitch);
+    }
+}
+
+fn end_practice(
+    mut commands: Commands,
+    mut enabled: ResMut<crate::gun::GunEnabled>,
+    practice: Query<Entity, With<PracticePlayer>>,
+) {
+    enabled.0 = false;
+    for e in &practice {
+        commands.entity(e).despawn();
+    }
 }
 
 fn lobby(
@@ -227,33 +321,7 @@ fn read_local_inputs(
 ) {
     let mut map = bevy::platform::collections::HashMap::new();
     for handle in &local_players.0 {
-        let mut b = 0u8;
-        if keys.pressed(KeyCode::KeyW) {
-            b |= BTN_FWD;
-        }
-        if keys.pressed(KeyCode::KeyS) {
-            b |= BTN_BACK;
-        }
-        if keys.pressed(KeyCode::KeyA) {
-            b |= BTN_LEFT;
-        }
-        if keys.pressed(KeyCode::KeyD) {
-            b |= BTN_RIGHT;
-        }
-        if keys.pressed(KeyCode::Space) {
-            b |= BTN_JUMP;
-        }
-        if buttons.pressed(MouseButton::Left) {
-            b |= BTN_FIRE;
-        }
-        map.insert(
-            *handle,
-            NetInput {
-                buttons: b,
-                yaw_mrad: (look.yaw * 1000.0) as i16,
-                pitch_mrad: (look.pitch * 1000.0) as i16,
-            },
-        );
+        map.insert(*handle, build_input(&keys, &buttons, &look));
     }
     commands.insert_resource(LocalInputs::<Config>(map));
 }
