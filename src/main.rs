@@ -12,6 +12,7 @@ use bevy::{
 use bevy_ahoy::prelude::*;
 use bevy_enhanced_input::prelude::*;
 
+mod gun;
 mod vibe;
 
 /// Phase 1: quake movement (bevy_ahoy) in a graybox dream arena, rendered PS1-style:
@@ -36,6 +37,7 @@ fn main() -> AppExit {
             AhoyPlugins::default(),
             MaterialPlugin::<PsxMaterial>::default(),
             vibe::VibePlugin,
+            gun::GunPlugin,
         ))
         .add_input_context::<PlayerInput>()
         .add_systems(
@@ -71,13 +73,13 @@ const INTERNAL_WIDTH: u32 = 426;
 const INTERNAL_HEIGHT: u32 = 240;
 
 /// StandardMaterial + PS1 vertex snapping.
-type PsxMaterial = ExtendedMaterial<StandardMaterial, PsxExtension>;
+pub type PsxMaterial = ExtendedMaterial<StandardMaterial, PsxExtension>;
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
-struct PsxExtension {
+pub struct PsxExtension {
     /// x: bass, y: lowmid, z: highmid, w: treble — fed by the vibe layer
     #[uniform(100)]
-    bands: Vec4,
+    pub bands: Vec4,
 }
 
 impl MaterialExtension for PsxExtension {
@@ -440,7 +442,7 @@ fn setup_arena(
     }
 }
 
-fn psx(color: Color, roughness: f32, metallic: f32) -> PsxMaterial {
+pub fn psx(color: Color, roughness: f32, metallic: f32) -> PsxMaterial {
     ExtendedMaterial {
         base: StandardMaterial {
             base_color: color,
