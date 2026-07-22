@@ -228,6 +228,7 @@ fn fire(
     mut cooldown: ResMut<Cooldown>,
     time: Res<Time>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
+    player: Query<Entity, With<crate::PlayerInput>>,
     spatial: SpatialQuery,
     targets: Query<(), With<Target>>,
     clock: Res<BeatClock>,
@@ -253,7 +254,10 @@ fn fire(
 
     let origin = cam.translation();
     let dir = cam.forward();
-    let hit = spatial.cast_ray(origin, dir, RANGE, true, &SpatialQueryFilter::default());
+    // exclude the shooter: the ray starts inside the player's own collider,
+    // which otherwise eats every shot at distance zero
+    let filter = SpatialQueryFilter::default().with_excluded_entities(player.iter());
+    let hit = spatial.cast_ray(origin, dir, RANGE, true, &filter);
 
     let (end, hit_target) = match hit {
         Some(h) => (

@@ -92,7 +92,7 @@ impl MaterialExtension for PsxExtension {
 struct PsxTarget(Handle<Image>);
 
 #[derive(Component, Default)]
-struct PlayerInput;
+pub struct PlayerInput;
 
 fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     // no view-format reinterpretation: WebGL2 lacks VIEW_FORMATS support
