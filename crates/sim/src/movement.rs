@@ -9,7 +9,11 @@ pub const DT: f32 = 1.0 / crate::TICK_HZ as f32;
 
 pub const SPEED: f32 = 17.5;
 pub const ACCEL_HZ: f32 = 16.0;
-pub const AIR_ACCEL_HZ: f32 = 4.0;
+/// Quake-style air control: accelerate along wish only while the velocity
+/// component in the wish direction is below this cap. Preserves and permits
+/// gaining speed (strafe/surf kinetics) — never damps toward a target.
+pub const AIR_WISH_CAP: f32 = 1.0;
+pub const AIR_ACCEL_ADD: f32 = 35.0;
 pub const FRICTION_HZ: f32 = 18.0;
 pub const GRAVITY: f32 = 29.0;
 /// sqrt(2 * GRAVITY * jump_height 1.8)
@@ -99,20 +103,26 @@ pub fn step(state: &mut PlayerState, input: &NetInput, arena: &[Aabb]) {
         wish[1] /= len;
     }
 
-    // exponential accel toward wish velocity; friction when grounded w/o input
-    let accel_hz = if state.grounded {
-        ACCEL_HZ
-    } else {
-        AIR_ACCEL_HZ
-    };
-    let k = 1.0 - (-accel_hz * DT).exp();
-    if has_input {
-        state.vel[0] += (wish[0] * SPEED - state.vel[0]) * k;
-        state.vel[2] += (wish[1] * SPEED - state.vel[2]) * k;
-    } else if state.grounded {
-        let f = (-FRICTION_HZ * DT).exp();
-        state.vel[0] *= f;
-        state.vel[2] *= f;
+    // ground: exponential accel toward wish (dashdance feel, playtested);
+    // air: additive quake accel — the engine of bhop and surf kinetics.
+    // never damps toward a target in air, so speed above SPEED survives.
+    if state.grounded {
+        if has_input {
+            let k = 1.0 - (-ACCEL_HZ * DT).exp();
+            state.vel[0] += (wish[0] * SPEED - state.vel[0]) * k;
+            state.vel[2] += (wish[1] * SPEED - state.vel[2]) * k;
+        } else {
+            let f = (-FRICTION_HZ * DT).exp();
+            state.vel[0] *= f;
+            state.vel[2] *= f;
+        }
+    } else if has_input {
+        let cur = state.vel[0] * wish[0] + state.vel[2] * wish[1];
+        if cur < AIR_WISH_CAP {
+            let add = (AIR_WISH_CAP - cur).min(AIR_ACCEL_ADD * DT);
+            state.vel[0] += wish[0] * add;
+            state.vel[2] += wish[1] * add;
+        }
     }
 
     if state.grounded && b & BTN_JUMP != 0 {
@@ -128,6 +138,13 @@ pub fn step(state: &mut PlayerState, input: &NetInput, arena: &[Aabb]) {
         resolve_axis(state, axis, arena);
     }
     resolve_ramp(state);
+    // the ramp can push positionally (incl. downward from its underside);
+    // clean up any resulting arena overlap by minimal penetration
+    for _ in 0..3 {
+        if !depenetrate(state, arena) {
+            break;
+        }
+    }
     // safety floor: never fall out of the world
     if state.pos[1] < -20.0 {
         state.pos = [0.0, 2.0, 0.0];
@@ -171,10 +188,47 @@ fn resolve_ramp(state: &mut PlayerState) {
                 *v -= ni * vn;
             }
         }
-        if n[1] > 0.75 {
+        // steep faces are surf surfaces, not ground: no friction, gravity
+        // slides you — jump on, carve, gain speed (source ramp feel)
+        if n[1] > 0.95 {
             state.grounded = true;
         }
     }
+}
+
+/// Positional de-penetration vs the AABB arena: push out along the axis of
+/// least overlap (velocity-sign-agnostic — for overlap we didn't integrate
+/// into). Returns whether anything was resolved.
+fn depenetrate(state: &mut PlayerState, arena: &[Aabb]) -> bool {
+    let me = player_aabb(state.pos);
+    for solid in arena {
+        if !overlaps(&me, solid) {
+            continue;
+        }
+        // (axis, signed push) with minimal magnitude
+        let mut best = (0usize, f32::INFINITY);
+        for axis in 0..3 {
+            let push_pos = solid.1[axis] - me.0[axis]; // push +axis
+            let push_neg = me.1[axis] - solid.0[axis]; // push -axis
+            if push_pos < best.1.abs() {
+                best = (axis, push_pos);
+            }
+            if push_neg < best.1.abs() {
+                best = (axis, -push_neg);
+            }
+        }
+        let (axis, push) = best;
+        state.pos[axis] += push;
+        // kill velocity into the face; ground if we were pushed upward
+        if state.vel[axis] * push.signum() < 0.0 {
+            state.vel[axis] = 0.0;
+        }
+        if axis == 1 && push > 0.0 {
+            state.grounded = true;
+        }
+        return true;
+    }
+    false
 }
 
 fn player_aabb(pos: [f32; 3]) -> Aabb {
@@ -277,24 +331,32 @@ mod tests {
             buttons: BTN_RIGHT,
             ..Default::default()
         };
-        for _ in 0..240 {
+        let mut min_y = f32::MAX;
+        for _ in 0..600 {
             step(&mut p, &input, &arena);
+            min_y = min_y.min(p.pos[1]);
         }
-        // blocked by the underside; never through to the far side
+        // blocked by the underside; never through, never below the floor
+        // (regression: underside push once shoved players out of the world)
         assert!(p.pos[0] < 20.0, "passed through ramp: pos {:?}", p.pos);
+        assert!(min_y > -0.1, "pushed below the floor: min_y {min_y}");
     }
 
     #[test]
-    fn ramp_top_face_carries_you() {
+    fn ramp_surfs_you_down_and_off() {
         let arena = graybox();
-        // drop onto the slope from above (slope surface at x=14 is y~4.7)
+        // drop onto the slope from above: surf surface (not ground) —
+        // gravity slides you down and off the foot, never through anything
         let mut p = PlayerState::spawn([14.0, 8.0, 8.0], 0.0);
-        for _ in 0..180 {
+        let mut min_y = f32::MAX;
+        for _ in 0..240 {
             step(&mut p, &NetInput::default(), &arena);
+            min_y = min_y.min(p.pos[1]);
         }
+        assert!(min_y > -0.1, "went below the floor: min_y {min_y}");
         assert!(
-            p.pos[1] > 2.0,
-            "fell through the ramp top face: pos {:?}",
+            p.pos[0] > 18.0 && p.pos[1] < 0.1,
+            "should slide off the ramp foot onto the floor: pos {:?}",
             p.pos
         );
     }
@@ -328,5 +390,5 @@ mod tests {
         assert_eq!(run(), GOLDEN);
     }
 
-    const GOLDEN: u64 = 10433130871032134380;
+    const GOLDEN: u64 = 3825664799770014094;
 }

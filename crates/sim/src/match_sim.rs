@@ -281,5 +281,5 @@ mod tests {
         assert_eq!(run(), GOLDEN);
     }
 
-    const GOLDEN: u64 = 7544990951849628939;
+    const GOLDEN: u64 = 2931248736948975657;
 }
