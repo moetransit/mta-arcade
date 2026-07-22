@@ -19,6 +19,8 @@ pub const GRAVITY: f32 = 29.0;
 /// sqrt(2 * GRAVITY * jump_height 1.8)
 pub const JUMP_SPEED: f32 = 10.219_589;
 
+/// Max ledge rise you walk straight up (stair steps are 0.3).
+pub const STEP_UP: f32 = 0.35;
 pub const PLAYER_HALF_XZ: f32 = 0.4;
 pub const PLAYER_HEIGHT: f32 = 1.8;
 pub const EYE_HEIGHT: f32 = 1.6;
@@ -188,10 +190,29 @@ fn resolve_ramp(state: &mut PlayerState) {
                 *v -= ni * vn;
             }
         }
-        // steep faces are surf surfaces, not ground: no friction, gravity
-        // slides you — jump on, carve, gain speed (source ramp feel)
-        if n[1] > 0.95 {
-            state.grounded = true;
+        // slope semantics by downhill motion: project gravity onto the
+        // plane; sliding down-slope fast = surf (no friction, momentum
+        // compounds); standing / climbing = ground. all four cases fall
+        // out naturally: stand, walk up, drop-in ride, bhop launch.
+        if n[1] > 0.7 {
+            let gn = -n[1]; // gravity(0,-1,0) · n
+            let mut d = [-n[0] * gn, -1.0 - n[1] * gn, -n[2] * gn];
+            let dl = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            let vdown = if dl > 1e-6 {
+                (state.vel[0] * d[0] + state.vel[1] * d[1] + state.vel[2] * d[2]) / dl
+            } else {
+                0.0
+            };
+            if vdown < 2.0 {
+                state.grounded = true;
+                // grounded on a slope: cancel residual downhill creep
+                // (walking up has vdown < 0 and is untouched)
+                if vdown > 0.0 && dl > 1e-6 {
+                    for (v, di) in state.vel.iter_mut().zip(&d) {
+                        *v -= di / dl * vdown;
+                    }
+                }
+            }
         }
     }
 }
@@ -251,6 +272,20 @@ fn resolve_axis(state: &mut PlayerState, axis: usize, arena: &[Aabb]) {
     for solid in arena {
         if !overlaps(&me, solid) {
             continue;
+        }
+        // stair step-up: a low ledge in our horizontal path is climbed, not
+        // hit — lift to its top if there's room and we aren't moving upward
+        if axis != 1 {
+            let rise = solid.1[1] - state.pos[1];
+            if rise > 0.0 && rise <= STEP_UP && state.vel[1] <= 0.01 {
+                let mut lifted = state.pos;
+                lifted[1] = solid.1[1] + 1e-3;
+                if !arena.iter().any(|s2| overlaps(&player_aabb(lifted), s2)) {
+                    state.pos = lifted;
+                    state.grounded = true;
+                    return resolve_axis(state, axis, arena);
+                }
+            }
         }
         if state.vel[axis] > 0.0 {
             // moving +axis: clamp our max face to their min face
@@ -343,10 +378,10 @@ mod tests {
     }
 
     #[test]
-    fn ramp_surfs_you_down_and_off() {
+    fn ramp_stands_when_slow_surfs_when_fast() {
         let arena = graybox();
-        // drop onto the slope from above: surf surface (not ground) —
-        // gravity slides you down and off the foot, never through anything
+        // a hard drop onto the slope slides you down and off (kinetics),
+        // never through the floor
         let mut p = PlayerState::spawn([14.0, 8.0, 8.0], 0.0);
         let mut min_y = f32::MAX;
         for _ in 0..240 {
@@ -355,9 +390,77 @@ mod tests {
         }
         assert!(min_y > -0.1, "went below the floor: min_y {min_y}");
         assert!(
-            p.pos[0] > 18.0 && p.pos[1] < 0.1,
-            "should slide off the ramp foot onto the floor: pos {:?}",
+            p.pos[0] > 20.0 && p.pos[1] < 0.1,
+            "hard drop should surf off the foot: pos {:?}",
             p.pos
+        );
+
+        // placed gently on the slope: it's ground — you stand
+        let mut p = PlayerState::spawn([14.0, 4.85, 8.0], 0.0);
+        for _ in 0..120 {
+            step(&mut p, &NetInput::default(), &arena);
+        }
+        assert!(
+            (p.pos[0] - 14.0).abs() < 1.5 && p.pos[1] > 3.5,
+            "standing on the slope should hold: pos {:?}",
+            p.pos
+        );
+
+        // hot entry: surf — no friction, gravity compounds the ride
+        let mut p = PlayerState::spawn([11.0, 6.5, 8.0], 0.0);
+        p.vel = [15.0, 0.0, 0.0];
+        let mut top_speed = 0.0_f32;
+        for _ in 0..180 {
+            step(&mut p, &NetInput::default(), &arena);
+            let h = (p.vel[0] * p.vel[0] + p.vel[2] * p.vel[2]).sqrt();
+            top_speed = top_speed.max(h);
+        }
+        assert!(
+            top_speed > 19.0,
+            "downhill surf should gain speed, top {top_speed}"
+        );
+    }
+
+    #[test]
+    fn stairs_walk_up_without_jumping() {
+        let arena = graybox();
+        // stairs run x=8, z from -3.5 down to -9.5, rising 0.3 per step
+        let mut p = PlayerState::spawn([8.0, 0.0, -1.0], 0.0);
+        for _ in 0..30 {
+            step(&mut p, &NetInput::default(), &arena);
+        }
+        let fwd = NetInput {
+            buttons: BTN_FWD,
+            ..Default::default()
+        };
+        let mut max_y = 0.0_f32;
+        for _ in 0..240 {
+            step(&mut p, &fwd, &arena);
+            max_y = max_y.max(p.pos[1]);
+        }
+        assert!(max_y > 1.5, "should climb the stairs, max_y = {max_y}");
+    }
+
+    #[test]
+    fn ramp_walkable_at_run_speed() {
+        let arena = graybox();
+        // from the ramp foot, run up-slope (-x) at ground speed
+        let mut p = PlayerState::spawn([24.0, 0.0, 8.0], 0.0);
+        for _ in 0..30 {
+            step(&mut p, &NetInput::default(), &arena);
+        }
+        let left = NetInput {
+            buttons: BTN_LEFT,
+            ..Default::default()
+        };
+        let mut max_y = 0.0_f32;
+        for _ in 0..360 {
+            step(&mut p, &left, &arena);
+            max_y = max_y.max(p.pos[1]);
+        }
+        assert!(
+            max_y > 2.5,
+            "should climb the ramp at run speed, max_y = {max_y}"
         );
     }
 
