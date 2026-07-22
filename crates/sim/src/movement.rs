@@ -196,7 +196,7 @@ fn resolve_ramp(state: &mut PlayerState) {
         // out naturally: stand, walk up, drop-in ride, bhop launch.
         if n[1] > 0.7 {
             let gn = -n[1]; // gravity(0,-1,0) · n
-            let mut d = [-n[0] * gn, -1.0 - n[1] * gn, -n[2] * gn];
+            let d = [-n[0] * gn, -1.0 - n[1] * gn, -n[2] * gn];
             let dl = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
             let vdown = if dl > 1e-6 {
                 (state.vel[0] * d[0] + state.vel[1] * d[1] + state.vel[2] * d[2]) / dl
