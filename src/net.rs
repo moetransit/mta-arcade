@@ -99,7 +99,13 @@ pub fn run(room_url: String) -> AppExit {
         .init_state::<NetState>()
         .add_systems(
             Startup,
-            (crate::setup_render_target, crate::setup_arena, setup_net).chain(),
+            (
+                crate::setup_render_target,
+                crate::setup_arena,
+                crate::setup_now_playing,
+                setup_net,
+            )
+                .chain(),
         )
         .add_systems(
             Update,
@@ -120,6 +126,8 @@ pub fn run(room_url: String) -> AppExit {
                     KeyCode::Escape,
                 )),
                 mouse_look,
+                crate::show_now_playing,
+                crate::update_iidx,
                 (sync_bodies, camera_follow).run_if(in_state(NetState::InGame)),
             ),
         )
@@ -144,7 +152,7 @@ fn setup_net(mut commands: Commands, url: Res<RoomUrl>, target: Res<crate::PsxTa
     ));
 
     commands.spawn((
-        Text::new("dialing the void..."),
+        Text::new("dialing the void...\nclick to practice while you wait"),
         TextFont {
             font_size: 16.0,
             ..default()
@@ -267,7 +275,10 @@ fn lobby(
 
     let connected = socket.connected_peers().count();
     for mut t in &mut text {
-        t.0 = format!("waiting for opponent... ({}/2 in room)", connected + 1);
+        t.0 = format!(
+            "waiting for opponent... ({}/2 in room)\nclick to practice: shoot shards on the beat",
+            connected + 1
+        );
     }
     if connected < 1 {
         return;

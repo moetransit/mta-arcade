@@ -154,7 +154,7 @@ const IIDX_LINE_X: f32 = 32.0;
 const IIDX_PX_PER_SEC: f32 = 110.0;
 const IIDX_NOTE_POOL: usize = 8;
 
-fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
+pub fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
     commands.spawn((
         Text::new(format!("♪ {} — {}", now.artist, now.title)),
         TextFont {
@@ -257,7 +257,7 @@ fn tap_calibration(
 }
 
 /// Scroll notes right-to-left so each crosses the line at its exact beat time.
-fn update_iidx(
+pub fn update_iidx(
     clock: Res<vibe::BeatClock>,
     mut notes: Query<(&IidxNote, &mut Node, &mut Visibility), Without<IidxLine>>,
     mut line: Query<&mut BackgroundColor, With<IidxLine>>,
@@ -299,7 +299,7 @@ fn update_iidx(
 }
 
 /// Reveal the now-playing tag once audio actually starts.
-fn show_now_playing(
+pub fn show_now_playing(
     clock: Res<vibe::BeatClock>,
     mut label: Query<&mut Visibility, With<NowPlayingLabel>>,
 ) {
