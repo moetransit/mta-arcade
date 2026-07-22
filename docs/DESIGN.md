@@ -31,6 +31,7 @@
 - **Respawn:** instant, at the spawn point furthest from your killer.
 - **Arenas:** small (30s to cross), vertical, wrap-around teleporters. One arena per track; arena mood = track mood.
 - **Sessions:** matches are rooms of 2–4. Solo visitors get a target-practice dream (same arena, floating targets on the beat) so the link is never dead.
+- **Mode 2: RHYTHM MODE.** Same arena, same railgun — but the gun is only *live* in a window around each beat (±1 sim tick tuned per track, ~±80ms). Off-beat shots fizzle with a sad visual. Consecutive on-beat frags build a combo that shortens the beam cooldown; dropping the combo resets it. Respawns quantize to the next bar line. Firefights become rhythm duels: everyone shares the same deterministic beat clock (`beats.json` + sim tick — see §5), so "was that on beat?" has one answer on every peer. Works in FFA and solo target practice.
 
 ## 4. Tech stack
 

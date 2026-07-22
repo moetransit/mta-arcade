@@ -1,0 +1,22 @@
+[package]
+name = "mta-arcade"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+bevy = "0.16"
+
+# fast dev iterating: our code light, deps optimized
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# wasm size budget (design doc §8)
+[profile.release]
+opt-level = "z"
+lto = "thin"
+codegen-units = 1
+strip = true
