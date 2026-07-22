@@ -19,6 +19,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
+      # deterministic sim core: unit tests + golden determinism hash
+      - run: cargo test -p mta-sim
       # clippy against the shipping target: wasm needs no native system libs
       # (bevy 0.18 native linux wants wayland/alsa/udev dev packages)
       - run: cargo clippy --all-targets --target wasm32-unknown-unknown -- -D warnings

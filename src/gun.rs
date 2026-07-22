@@ -16,14 +16,12 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::vibe::BeatClock;
+use mta_sim::{judge as sim_judge, BeatGrid, Judgment};
 
 const COOLDOWN_S: f32 = 0.5; // solo practice cadence; instagib 1.2s comes with mp
 const RANGE: f32 = 200.0;
 const MAX_TARGETS: usize = 8;
 const TARGET_LIFETIME_S: f32 = 8.0;
-
-const MARVELOUS_WINDOW_S: f64 = 0.017; // ~±1 tick @ 60hz
-const GREAT_WINDOW_S: f64 = 0.050; // ~±3 ticks
 
 pub struct GunPlugin;
 
@@ -83,35 +81,13 @@ struct JudgmentText {
 #[derive(Component)]
 struct ScoreText;
 
-/// Judge a kill instant against the beat grid. Returns (label, points).
+/// Judge a kill instant against the beat grid via the deterministic sim core.
 fn judge(clock: &BeatClock) -> (&'static str, u32) {
-    let t = clock.effective_time();
-    let on = clock.offset_to_nearest_beat(t).map(f64::abs);
-    // offbeat grid = midpoints between beats
-    let off = {
-        let i = clock.beat_times.partition_point(|&b| b <= t);
-        let mid_prev = if i >= 1 && i < clock.beat_times.len() {
-            Some((clock.beat_times[i - 1] + clock.beat_times[i]) / 2.0)
-        } else {
-            None
-        };
-        let mid_prev2 = if i >= 2 {
-            Some((clock.beat_times[i - 2] + clock.beat_times[i - 1]) / 2.0)
-        } else {
-            None
-        };
-        [mid_prev, mid_prev2]
-            .into_iter()
-            .flatten()
-            .map(|m| (t - m).abs())
-            .fold(f64::INFINITY, f64::min)
-    };
-    match (on, off) {
-        (Some(b), _) if b <= MARVELOUS_WINDOW_S => ("MARVELOUS", 5),
-        (_, o) if o <= MARVELOUS_WINDOW_S => ("MARV·OFF", 4),
-        (Some(b), o) if b.min(o) <= GREAT_WINDOW_S => ("GREAT", 2),
-        _ => ("...", 1),
-    }
+    // NOTE: solo mode judges on the calibrated presentation clock; netplay
+    // will call sim_judge with a sim-tick-derived time instead (doc §5).
+    let grid = BeatGrid::new(clock.beat_times.clone());
+    let j: Judgment = sim_judge(&grid, clock.effective_time());
+    (j.label(), j.points())
 }
 
 fn setup_gun_ui(
