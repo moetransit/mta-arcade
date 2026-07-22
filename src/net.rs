@@ -343,9 +343,17 @@ fn spawn_players(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<crate::PsxMaterial>>,
     text: Query<Entity, With<LobbyText>>,
+    local_players: Res<LocalPlayers>,
+    mut look: ResMut<Look>,
 ) {
     for e in &text {
         commands.entity(e).despawn();
+    }
+    // face your opponent from your assigned spawn (input yaw overrides spawn
+    // yaw on tick 1, so the look angles must start at the spawn's facing)
+    if let Some(&handle) = local_players.0.first() {
+        look.yaw = SPAWNS[handle].1;
+        look.pitch = 0.0;
     }
     let body = meshes.add(Cuboid::new(0.8, 1.8, 0.8));
     let colors = [Color::srgb(0.53, 0.81, 0.80), Color::srgb(0.84, 0.16, 0.46)];
