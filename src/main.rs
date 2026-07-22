@@ -136,15 +136,15 @@ pub fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Ima
 }
 
 #[derive(Component)]
-struct NowPlayingLabel;
+pub struct NowPlayingLabel;
 
 /// The IIDX clock: a lane where notes cross the judgment line exactly on
 /// each analyzed beat — an eyeball test of beat-grid accuracy vs your ears.
 #[derive(Component)]
-struct IidxNote(usize);
+pub struct IidxNote(usize);
 
 #[derive(Component)]
-struct IidxLine;
+pub struct IidxLine;
 
 #[derive(Component)]
 struct CalLabel;
