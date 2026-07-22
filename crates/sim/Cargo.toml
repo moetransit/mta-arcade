@@ -6,3 +6,4 @@ license = "MIT"
 description = "Deterministic rhythm-shooter core: beat judgment, scoring. No rendering, no audio, no I/O."
 
 [dependencies]
+serde = { version = "1", features = ["derive"], default-features = false }
