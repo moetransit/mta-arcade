@@ -56,6 +56,7 @@ fn main() -> AppExit {
                 vibe_visuals,
                 show_now_playing,
                 update_iidx,
+                tap_calibration.run_if(input_just_pressed(KeyCode::KeyT)),
             ),
         )
         .run()
@@ -134,6 +135,9 @@ struct IidxNote(usize);
 #[derive(Component)]
 struct IidxLine;
 
+#[derive(Component)]
+struct CalLabel;
+
 const IIDX_LANE_W: f32 = 200.0;
 const IIDX_LINE_X: f32 = 32.0;
 const IIDX_PX_PER_SEC: f32 = 110.0;
@@ -186,6 +190,21 @@ fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
                 BackgroundColor(Color::srgb(1.0, 1.0, 1.0)),
                 IidxLine,
             ));
+            lane.spawn((
+                Text::new("T = tap to beat"),
+                TextFont {
+                    font_size: 9.0,
+                    ..default()
+                },
+                TextColor(Color::srgba(0.53, 0.81, 0.80, 0.7)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(4.0),
+                    top: Val::Px(2.0),
+                    ..default()
+                },
+                CalLabel,
+            ));
             for i in 0..IIDX_NOTE_POOL {
                 lane.spawn((
                     Node {
@@ -204,6 +223,28 @@ fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
         });
 }
 
+/// Tap calibration: press T on the beat; the median tap offset becomes a
+/// per-device correction applied to the whole beat clock (and persisted).
+fn tap_calibration(
+    mut clock: ResMut<vibe::BeatClock>,
+    mut label: Query<&mut Text, With<CalLabel>>,
+) {
+    if !clock.playing {
+        return;
+    }
+    let taps = clock.taps.len() + 1;
+    if let Some(median) = clock.record_tap() {
+        vibe::save_calibration(median);
+        for mut text in &mut label {
+            text.0 = format!("cal {:+.0}ms ({} taps)", median * 1000.0, taps);
+        }
+    } else {
+        for mut text in &mut label {
+            text.0 = format!("tap {taps}/4...");
+        }
+    }
+}
+
 /// Scroll notes right-to-left so each crosses the line at its exact beat time.
 fn update_iidx(
     clock: Res<vibe::BeatClock>,
@@ -213,7 +254,7 @@ fn update_iidx(
     if !clock.playing {
         return;
     }
-    let now = clock.time_s;
+    let now = clock.effective_time();
     let lookahead = ((IIDX_LANE_W - IIDX_LINE_X) / IIDX_PX_PER_SEC) as f64;
     let lookbehind = (IIDX_LINE_X / IIDX_PX_PER_SEC) as f64;
 

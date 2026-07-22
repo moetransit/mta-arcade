@@ -3568,8 +3568,10 @@ dependencies = [
  "bevy",
  "bevy_ahoy",
  "bevy_enhanced_input",
+ "js-sys",
  "serde_json",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
