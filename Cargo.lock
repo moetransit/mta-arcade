@@ -3568,11 +3568,16 @@ dependencies = [
  "bevy",
  "bevy_ahoy",
  "bevy_enhanced_input",
+ "mta-sim",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
 ]
+
+[[package]]
+name = "mta-sim"
+version = "0.1.0"
 
 [[package]]
 name = "naga"

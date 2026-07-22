@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/sim"]
+
 [package]
 name = "mta-arcade"
 version = "0.1.0"
@@ -5,6 +8,7 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
+mta-sim = { path = "crates/sim" }
 bevy = "0.18"
 bevy_ahoy = { version = "0.1", default-features = false }
 bevy_enhanced_input = "0.24"
