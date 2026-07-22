@@ -268,14 +268,12 @@ mod web {
                 return None;
             };
             state.analyser.get_byte_frequency_data(&mut state.buf);
-            // outputLatency is unstable in web-sys; read it reflectively
-            // (0.0 where the browser doesn't expose it)
-            let latency = js_sys::Reflect::get(&state.ctx, &"outputLatency".into())
-                .ok()
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let t =
-                (state.ctx.current_time() - state.start_time - latency).rem_euclid(state.duration);
+            // NOTE: we deliberately do NOT subtract AudioContext.outputLatency —
+            // browsers over-report it (playtest: firefox/macos claimed ~200ms on
+            // laptop speakers, skewing taps to -178ms). tap calibration absorbs
+            // the true device latency instead; one measured number beats a
+            // stack of estimates.
+            let t = (state.ctx.current_time() - state.start_time).rem_euclid(state.duration);
             Some((state.buf.clone(), t))
         })
     }
