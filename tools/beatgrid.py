@@ -18,9 +18,13 @@ import wave
 import numpy as np
 
 
-def onset_envelope(pcm, sr, hop=256, win=1024):
+def onset_envelope(pcm, sr, hop=256, win=1024, band=None):
+    """Spectral-flux onset envelope; band=(lo_hz, hi_hz) restricts bins."""
     frames = np.lib.stride_tricks.sliding_window_view(pcm, win)[::hop] * np.hanning(win)
     mag = np.abs(np.fft.rfft(frames, axis=1))
+    if band is not None:
+        freqs = np.fft.rfftfreq(win, 1 / sr)
+        mag = mag[:, (freqs >= band[0]) & (freqs <= band[1])]
     flux = np.maximum(np.diff(mag, axis=0), 0).sum(axis=1)
     flux /= flux.max() + 1e-9
     t = (np.arange(len(flux)) * hop + win / 2) / sr
@@ -84,6 +88,29 @@ def main():
     else:
         lo, hi = 60.0, 200.0  # slow; pass a hint when you know the ballpark
     score, bpm, phase = fit_grid(flux, t, dur, lo, hi)
+
+    # re-anchor PHASE on the kick band: full-band flux is dominated by
+    # hats/snares and happily locks onto the offbeat (disco_machine_gun
+    # shipped half a beat late before this). tempo from full band, downbeat
+    # phase from the kicks.
+    kflux, kt = onset_envelope(pcm, sr, band=(30.0, 140.0))
+    period = 60.0 / bpm
+    best_k = (0.0, phase)
+    for ph in np.arange(0, period, 0.002):
+        grid = np.arange(ph, dur, period)
+        idx = np.searchsorted(kt, grid)
+        idx = idx[(idx > 0) & (idx < len(kflux))]
+        sc = kflux[idx].mean()
+        if sc > best_k[0]:
+            best_k = (sc, ph)
+    for ph in np.arange(max(0, best_k[1] - 0.004), best_k[1] + 0.004, 0.0005):
+        grid = np.arange(ph, dur, period)
+        idx = np.searchsorted(kt, grid)
+        idx = idx[(idx > 0) & (idx < len(kflux))]
+        sc = kflux[idx].mean()
+        if sc > best_k[0]:
+            best_k = (sc, ph)
+    phase = best_k[1]
 
     grid = np.arange(phase, dur, 60.0 / bpm)
     med, std, cnt = verify(flux, t, grid)
