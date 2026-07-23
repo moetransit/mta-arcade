@@ -23,17 +23,36 @@ use mta_sim::{
 
 type Config = GgrsConfig<NetInput, PeerId>;
 
-/// Netplay is requested via `#net=<signaling-room-url>` in the page URL.
+/// The permanent signaling server (matchbox_server on fly.io, auto-stop).
+const DEFAULT_SIGNALING: &str = "wss://mta-signal.fly.dev";
+
+/// Netplay via the page URL hash:
+///   `#net`            → quick-match room on the default server
+///   `#net=disco123`   → named room on the default server (shareable code)
+///   `#net=wss://...`  → explicit signaling url (dev / self-hosted)
 #[allow(clippy::needless_return)] // early return is load-bearing across the cfg split
 pub fn requested() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {
         let hash = web_sys::window()?.location().hash().ok()?;
-        return hash.strip_prefix("#net=").map(|s| s.to_string());
+        return hash.strip_prefix("#net").map(expand_room);
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::env::args().find_map(|a| a.strip_prefix("--net=").map(|s| s.to_string()))
+        std::env::args().find_map(|a| a.strip_prefix("--net").map(expand_room))
+    }
+}
+
+fn expand_room(spec: &str) -> String {
+    let spec = spec.strip_prefix('=').unwrap_or(spec);
+    if spec.starts_with("ws://") || spec.starts_with("wss://") {
+        return spec.to_string();
+    }
+    let room = if spec.is_empty() { "mta_pub" } else { spec };
+    if room.contains('?') {
+        format!("{DEFAULT_SIGNALING}/{room}")
+    } else {
+        format!("{DEFAULT_SIGNALING}/{room}?next=2")
     }
 }
 
