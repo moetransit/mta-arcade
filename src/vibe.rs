@@ -36,6 +36,7 @@ pub struct NowPlaying {
 #[derive(Resource, Default)]
 pub struct BeatClock {
     pub beat_times: Vec<f64>,
+    pub duration_s: f64,
     pub time_s: f64,
     pub playing: bool,
     pub cal_offset_s: f64,
@@ -121,6 +122,7 @@ impl Plugin for VibePlugin {
         app.init_resource::<AudioBands>()
             .insert_resource(BeatClock {
                 beat_times,
+                duration_s: meta["duration_s"].as_f64().unwrap_or(0.0),
                 cal_offset_s: load_calibration(),
                 ..default()
             })
@@ -137,6 +139,13 @@ impl Plugin for VibePlugin {
 pub fn ensure_audio_started() {
     #[cfg(target_arch = "wasm32")]
     web::ensure_started();
+}
+
+/// Restart the track from t=0 — the match's shared musical clock: both
+/// peers call this on session start, aligning audio with sim tick 0.
+pub fn restart_track() {
+    #[cfg(target_arch = "wasm32")]
+    web::restart();
 }
 
 fn sample_audio(mut bands: ResMut<AudioBands>, mut clock: ResMut<BeatClock>) {
@@ -182,7 +191,8 @@ mod web {
     struct AudioState {
         ctx: AudioContext,
         analyser: AnalyserNode,
-        _source: AudioBufferSourceNode,
+        buffer: web_sys::AudioBuffer,
+        source: AudioBufferSourceNode,
         start_time: f64,
         duration: f64,
         buf: Vec<u8>,
@@ -251,11 +261,34 @@ mod web {
         Ok(AudioState {
             ctx,
             analyser,
-            _source: source,
+            buffer,
+            source,
             start_time,
             duration,
             buf,
         })
+    }
+
+    pub fn restart() {
+        AUDIO.with(|a| {
+            let mut a = a.borrow_mut();
+            let Phase::Ready(state) = &mut *a else {
+                return;
+            };
+            #[allow(deprecated)] // stop() is the correct API; web_sys mislabels it
+            let _ = state.source.stop();
+            let Ok(source) = state.ctx.create_buffer_source() else {
+                return;
+            };
+            source.set_buffer(Some(&state.buffer));
+            source.set_loop(true);
+            if source.connect_with_audio_node(&state.analyser).is_err() {
+                return;
+            }
+            state.start_time = state.ctx.current_time();
+            let _ = source.start();
+            state.source = source;
+        });
     }
 
     /// Returns (frequency bytes, playhead seconds) if audio is running.

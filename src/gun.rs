@@ -25,11 +25,20 @@ const TARGET_LIFETIME_S: f32 = 8.0;
 
 pub struct GunPlugin;
 
+/// Netplay flips this off when a match starts (practice is lobby-only there).
+#[derive(Resource)]
+pub struct GunEnabled(pub bool);
+
+fn gun_enabled(enabled: Res<GunEnabled>) -> bool {
+    enabled.0
+}
+
 impl Plugin for GunPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Score>()
             .init_resource::<Cooldown>()
             .init_resource::<TargetSpawner>()
+            .insert_resource(GunEnabled(true))
             .add_systems(Startup, setup_gun_ui)
             .add_systems(
                 Update,
@@ -41,8 +50,23 @@ impl Plugin for GunPlugin {
                     fade_beams,
                     fade_judgments,
                     update_score_text,
-                ),
-            );
+                )
+                    .run_if(gun_enabled),
+            )
+            // the beat ticks ride the reticle in every mode, match included
+            .add_systems(Update, update_reticle_ticks);
+    }
+}
+
+/// Remove all practice entities (targets, beams, judgment popups).
+pub fn cleanup_practice(
+    mut commands: Commands,
+    targets: Query<Entity, With<Target>>,
+    beams: Query<Entity, With<Beam>>,
+    judgments: Query<Entity, With<JudgmentText>>,
+) {
+    for e in targets.iter().chain(beams.iter()).chain(judgments.iter()) {
+        commands.entity(e).despawn();
     }
 }
 
@@ -63,23 +87,30 @@ struct TargetSpawner {
 }
 
 #[derive(Component)]
-struct Target {
+pub struct Target {
     born: f32,
     seed: f32,
 }
 
 #[derive(Component)]
-struct Beam {
+pub struct Beam {
     ttl: f32,
 }
 
 #[derive(Component)]
-struct JudgmentText {
+pub struct JudgmentText {
     ttl: f32,
 }
 
 #[derive(Component)]
 struct ScoreText;
+
+/// Reticle beat ticks: converge on the crosshair, meeting exactly on the
+/// beat. Peripheral rhythm aid — thin, low-alpha, never blocks the center.
+#[derive(Component)]
+struct ReticleTick {
+    side: f32,
+}
 
 /// Judge a kill instant against the beat grid via the deterministic sim core.
 fn judge(clock: &BeatClock) -> (&'static str, u32) {
@@ -118,6 +149,27 @@ fn setup_gun_ui(
         BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.9)),
         GlobalZIndex(1),
     ));
+
+    for side in [-1.0_f32, 1.0] {
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                width: Val::Px(2.0),
+                height: Val::Px(8.0),
+                margin: UiRect {
+                    left: Val::Px(side * 24.0 - 1.0),
+                    top: Val::Px(-4.0),
+                    ..default()
+                },
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.53, 0.81, 0.80, 0.0)),
+            GlobalZIndex(1),
+            ReticleTick { side },
+        ));
+    }
 
     // score, top-left
     commands.spawn((
@@ -319,6 +371,31 @@ fn fade_judgments(
         if jt.ttl <= 0.0 {
             commands.entity(entity).despawn();
         }
+    }
+}
+
+fn update_reticle_ticks(
+    clock: Res<BeatClock>,
+    mut ticks: Query<(&ReticleTick, &mut Node, &mut BackgroundColor)>,
+) {
+    if !clock.playing {
+        return;
+    }
+    let phase = clock.beat_phase();
+    // approach: 24px out just after a beat, 4px at the next beat
+    let dist = 4.0 + (1.0 - phase) * 20.0;
+    // brighten toward arrival; brief white kiss right at the beat
+    let glow = phase * phase * phase;
+    let alpha = 0.12 + 0.55 * glow;
+    let color = Color::srgba(
+        0.53 + 0.47 * glow,
+        0.81 + 0.19 * glow,
+        0.80 + 0.20 * glow,
+        alpha,
+    );
+    for (tick, mut node, mut bg) in &mut ticks {
+        node.margin.left = Val::Px(tick.side * dist - 1.0);
+        bg.0 = color;
     }
 }
 

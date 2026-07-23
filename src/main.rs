@@ -13,12 +13,21 @@ use bevy_ahoy::prelude::*;
 use bevy_enhanced_input::prelude::*;
 
 mod gun;
+mod net;
 mod vibe;
 
-/// Phase 1: quake movement (bevy_ahoy) in a graybox dream arena, rendered PS1-style:
+/// Quake movement in a graybox dream arena, rendered PS1-style:
 /// 426x240 internal target, nearest-upscaled, vertex-snapped geometry.
 /// Click to grab the mouse, Esc to release. WASD + Space, air-strafe welcome.
+/// With `#net=<signaling-url>` in the URL, runs p2p netplay instead (net.rs).
 fn main() -> AppExit {
+    if let Some(room_url) = net::requested() {
+        return net::run(room_url);
+    }
+    run_solo()
+}
+
+fn run_solo() -> AppExit {
     App::new()
         .insert_resource(ClearColor(DEEP_TEAL))
         .add_plugins((
@@ -64,7 +73,7 @@ fn main() -> AppExit {
         .run()
 }
 
-const DEEP_TEAL: Color = Color::srgb(0.004, 0.055, 0.06);
+pub const DEEP_TEAL: Color = Color::srgb(0.004, 0.055, 0.06);
 const ARENA_TEAL: Color = Color::srgb(0.075, 0.478, 0.498);
 const FLOOR_TEAL: Color = Color::srgb(0.016, 0.11, 0.115);
 
@@ -89,12 +98,12 @@ impl MaterialExtension for PsxExtension {
 }
 
 #[derive(Resource, Clone)]
-struct PsxTarget(Handle<Image>);
+pub struct PsxTarget(Handle<Image>);
 
 #[derive(Component, Default)]
 pub struct PlayerInput;
 
-fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+pub fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     // no view-format reinterpretation: WebGL2 lacks VIEW_FORMATS support
     let mut image = Image::new_target_texture(
         INTERNAL_WIDTH,
@@ -127,15 +136,15 @@ fn setup_render_target(mut commands: Commands, mut images: ResMut<Assets<Image>>
 }
 
 #[derive(Component)]
-struct NowPlayingLabel;
+pub struct NowPlayingLabel;
 
 /// The IIDX clock: a lane where notes cross the judgment line exactly on
 /// each analyzed beat — an eyeball test of beat-grid accuracy vs your ears.
 #[derive(Component)]
-struct IidxNote(usize);
+pub struct IidxNote(usize);
 
 #[derive(Component)]
-struct IidxLine;
+pub struct IidxLine;
 
 #[derive(Component)]
 struct CalLabel;
@@ -145,7 +154,7 @@ const IIDX_LINE_X: f32 = 32.0;
 const IIDX_PX_PER_SEC: f32 = 110.0;
 const IIDX_NOTE_POOL: usize = 8;
 
-fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
+pub fn setup_now_playing(mut commands: Commands, now: Res<vibe::NowPlaying>) {
     commands.spawn((
         Text::new(format!("♪ {} — {}", now.artist, now.title)),
         TextFont {
@@ -248,7 +257,7 @@ fn tap_calibration(
 }
 
 /// Scroll notes right-to-left so each crosses the line at its exact beat time.
-fn update_iidx(
+pub fn update_iidx(
     clock: Res<vibe::BeatClock>,
     mut notes: Query<(&IidxNote, &mut Node, &mut Visibility), Without<IidxLine>>,
     mut line: Query<&mut BackgroundColor, With<IidxLine>>,
@@ -290,7 +299,7 @@ fn update_iidx(
 }
 
 /// Reveal the now-playing tag once audio actually starts.
-fn show_now_playing(
+pub fn show_now_playing(
     clock: Res<vibe::BeatClock>,
     mut label: Query<&mut Visibility, With<NowPlayingLabel>>,
 ) {
@@ -358,7 +367,7 @@ fn setup_player(mut commands: Commands, target: Res<PsxTarget>) {
     ));
 }
 
-fn setup_arena(
+pub fn setup_arena(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<PsxMaterial>>,
