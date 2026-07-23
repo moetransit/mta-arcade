@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>moe transit arcade</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #010e0f; overflow: hidden; }
+  #mta-canvas { width: 100%; height: 100%; display: block; outline: none; }
+  #mta-loading {
+    position: fixed; inset: 0; background: #010e0f; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-family: 'Courier New', monospace; color: #86cecb; gap: 18px;
+  }
+  #mta-loading h1 { font-size: 18px; letter-spacing: 4px; margin: 0; color: #137a7f; }
+  #mta-loading p { font-size: 11px; color: #4a7a7a; margin: 0; }
+</style>
+
+
+<script type="module">
+import init, * as bindings from '/mta-arcade/mta-arcade-78316d8c149ad170.js';
+const wasm = await init({ module_or_path: '/mta-arcade/mta-arcade-78316d8c149ad170_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+<link rel="modulepreload" href="/mta-arcade/mta-arcade-78316d8c149ad170.js" crossorigin="anonymous" integrity="sha384-YyIKHPljQ0oVC9Std0QmcWukDVggGTCldaGFYbpoVtHOG6uK2Bmk84W7Qo/S045S"><link rel="preload" href="/mta-arcade/mta-arcade-78316d8c149ad170_bg.wasm" crossorigin="anonymous" integrity="sha384-WC+Df/+ZB+rKXZlk9qiXGJ4vqbpWkbS/LiVOtGN6xCJNVtg/Q5U0JHuTX4tzBvp7" as="fetch" type="application/wasm"></head>
+<body>
+<canvas id="mta-canvas"></canvas>
+<div id="mta-loading">
+  <h1>MOE TRANSIT ARCADE</h1>
+  <p>click to enter — sound on</p>
+</div>
+</body>
+</html>
