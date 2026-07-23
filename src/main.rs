@@ -27,8 +27,19 @@ fn main() -> AppExit {
     run_solo()
 }
 
-/// Tear down the static load screen once the app is alive.
-pub fn hide_loading_screen() {
+/// Kick off audio fetch+decode behind the load screen.
+pub fn start_preload() {
+    vibe::preload_audio();
+}
+
+/// Tear down the static load screen only when everything is ready for
+/// instant play (wasm booted AND the track is decoded) — no awkward
+/// half-loaded phase after the screen drops.
+pub fn hide_loading_when_ready(mut done: Local<bool>) {
+    if *done || !vibe::audio_ready() {
+        return;
+    }
+    *done = true;
     #[cfg(target_arch = "wasm32")]
     if let Some(el) = web_sys::window()
         .and_then(|w| w.document())
@@ -67,7 +78,7 @@ fn run_solo() -> AppExit {
                 setup_arena,
                 setup_player,
                 setup_now_playing,
-                hide_loading_screen,
+                start_preload,
             )
                 .chain(),
         )
@@ -79,6 +90,7 @@ fn run_solo() -> AppExit {
                 vibe_visuals,
                 show_now_playing,
                 update_iidx,
+                hide_loading_when_ready,
                 tap_calibration.run_if(input_just_pressed(KeyCode::KeyT)),
             ),
         )

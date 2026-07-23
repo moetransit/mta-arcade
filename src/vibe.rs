@@ -141,6 +141,21 @@ pub fn ensure_audio_started() {
     web::ensure_started();
 }
 
+/// Begin fetching + decoding the track NOW (no user gesture needed for
+/// that) so the first click can start playback instantly.
+pub fn preload_audio() {
+    #[cfg(target_arch = "wasm32")]
+    web::preload();
+}
+
+/// True once the track is decoded and ready for instant playback.
+pub fn audio_ready() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    return web::ready();
+    #[cfg(not(target_arch = "wasm32"))]
+    true
+}
+
 /// Restart the track from t=0 — the match's shared musical clock: both
 /// peers call this on session start, aligning audio with sim tick 0.
 pub fn restart_track() {
@@ -183,16 +198,17 @@ mod web {
     use std::cell::RefCell;
     use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
-    use web_sys::{AnalyserNode, AudioBufferSourceNode, AudioContext};
+    use web_sys::{AnalyserNode, AudioBuffer, AudioBufferSourceNode, AudioContext};
 
     /// Playback via AudioBufferSourceNode on the AudioContext clock:
-    /// sample-accurate playhead, unlike HTMLMediaElement.currentTime
-    /// (see "A Tale of Two Clocks" — the standard rhythm-game architecture).
-    struct AudioState {
+    /// sample-accurate playhead (see "A Tale of Two Clocks").
+    /// Fetch+decode happen eagerly at startup (allowed pre-gesture); only
+    /// playback waits for the first click — which is then instant.
+    struct Loaded {
         ctx: AudioContext,
         analyser: AnalyserNode,
-        buffer: web_sys::AudioBuffer,
-        source: AudioBufferSourceNode,
+        buffer: AudioBuffer,
+        source: Option<AudioBufferSourceNode>,
         start_time: f64,
         duration: f64,
         buf: Vec<u8>,
@@ -200,20 +216,22 @@ mod web {
 
     enum Phase {
         Idle,
-        Loading,
-        Ready(AudioState),
+        Loading { play_when_ready: bool },
+        Ready(Loaded),
     }
 
     thread_local! {
         static AUDIO: RefCell<Phase> = const { RefCell::new(Phase::Idle) };
     }
 
-    pub fn ensure_started() {
+    pub fn preload() {
         let should_load = AUDIO.with(|a| {
             let mut a = a.borrow_mut();
             match &*a {
                 Phase::Idle => {
-                    *a = Phase::Loading;
+                    *a = Phase::Loading {
+                        play_when_ready: false,
+                    };
                     true
                 }
                 _ => false,
@@ -221,10 +239,24 @@ mod web {
         });
         if should_load {
             wasm_bindgen_futures::spawn_local(async {
-                match init().await {
-                    Ok(state) => AUDIO.with(|a| *a.borrow_mut() = Phase::Ready(state)),
+                match load().await {
+                    Ok(loaded) => AUDIO.with(|a| {
+                        let mut a = a.borrow_mut();
+                        let pending = matches!(
+                            &*a,
+                            Phase::Loading {
+                                play_when_ready: true
+                            }
+                        );
+                        *a = Phase::Ready(loaded);
+                        if pending {
+                            if let Phase::Ready(l) = &mut *a {
+                                start_source(l);
+                            }
+                        }
+                    }),
                     Err(err) => {
-                        bevy::log::warn!("audio init failed: {err:?}");
+                        bevy::log::warn!("audio preload failed: {err:?}");
                         AUDIO.with(|a| *a.borrow_mut() = Phase::Idle);
                     }
                 }
@@ -232,7 +264,30 @@ mod web {
         }
     }
 
-    async fn init() -> Result<AudioState, JsValue> {
+    pub fn ready() -> bool {
+        AUDIO.with(|a| matches!(&*a.borrow(), Phase::Ready(_)))
+    }
+
+    pub fn ensure_started() {
+        preload(); // no-op if already past Idle
+        AUDIO.with(|a| {
+            let mut a = a.borrow_mut();
+            match &mut *a {
+                Phase::Ready(loaded) => {
+                    if loaded.source.is_none() {
+                        start_source(loaded);
+                    } else {
+                        // resume after tab-suspend
+                        let _ = loaded.ctx.resume();
+                    }
+                }
+                Phase::Loading { play_when_ready } => *play_when_ready = true,
+                Phase::Idle => {}
+            }
+        });
+    }
+
+    async fn load() -> Result<Loaded, JsValue> {
         let window = web_sys::window().ok_or("no window")?;
         let resp: web_sys::Response = JsFuture::from(window.fetch_with_str(crate::vibe::TRACK_SRC))
             .await?
@@ -241,71 +296,62 @@ mod web {
 
         let ctx = AudioContext::new()?;
         let decoded = JsFuture::from(ctx.decode_audio_data(&bytes.dyn_into()?)?).await?;
-        let buffer: web_sys::AudioBuffer = decoded.dyn_into()?;
+        let buffer: AudioBuffer = decoded.dyn_into()?;
         let duration = buffer.duration();
-
-        let source = ctx.create_buffer_source()?;
-        source.set_buffer(Some(&buffer));
-        source.set_loop(true);
 
         let analyser = ctx.create_analyser()?;
         analyser.set_fft_size(1024);
         analyser.set_smoothing_time_constant(0.5);
-        source.connect_with_audio_node(&analyser)?;
         analyser.connect_with_audio_node(&ctx.destination().unchecked_into())?;
 
-        let start_time = ctx.current_time();
-        source.start()?;
-
         let buf = vec![0u8; analyser.frequency_bin_count() as usize];
-        Ok(AudioState {
+        Ok(Loaded {
             ctx,
             analyser,
             buffer,
-            source,
-            start_time,
+            source: None,
+            start_time: 0.0,
             duration,
             buf,
         })
     }
 
+    fn start_source(l: &mut Loaded) {
+        let _ = l.ctx.resume();
+        if let Some(old) = l.source.take() {
+            #[allow(deprecated)] // stop() is the correct API; web_sys mislabels it
+            let _ = old.stop();
+        }
+        let Ok(source) = l.ctx.create_buffer_source() else {
+            return;
+        };
+        source.set_buffer(Some(&l.buffer));
+        source.set_loop(true);
+        if source.connect_with_audio_node(&l.analyser).is_err() {
+            return;
+        }
+        l.start_time = l.ctx.current_time();
+        let _ = source.start();
+        l.source = Some(source);
+    }
+
     pub fn restart() {
         AUDIO.with(|a| {
-            let mut a = a.borrow_mut();
-            let Phase::Ready(state) = &mut *a else {
-                return;
-            };
-            #[allow(deprecated)] // stop() is the correct API; web_sys mislabels it
-            let _ = state.source.stop();
-            let Ok(source) = state.ctx.create_buffer_source() else {
-                return;
-            };
-            source.set_buffer(Some(&state.buffer));
-            source.set_loop(true);
-            if source.connect_with_audio_node(&state.analyser).is_err() {
-                return;
+            if let Phase::Ready(l) = &mut *a.borrow_mut() {
+                start_source(l);
             }
-            state.start_time = state.ctx.current_time();
-            let _ = source.start();
-            state.source = source;
         });
     }
 
-    /// Returns (frequency bytes, playhead seconds) if audio is running.
-    /// Playhead = context clock since start, minus the browser's reported
-    /// output latency, wrapped to the loop length.
+    /// Returns (frequency bytes, playhead seconds) if audio is playing.
     pub fn sample() -> Option<(Vec<u8>, f64)> {
         AUDIO.with(|a| {
             let mut a = a.borrow_mut();
             let Phase::Ready(state) = &mut *a else {
                 return None;
             };
+            state.source.as_ref()?;
             state.analyser.get_byte_frequency_data(&mut state.buf);
-            // NOTE: we deliberately do NOT subtract AudioContext.outputLatency —
-            // browsers over-report it (playtest: firefox/macos claimed ~200ms on
-            // laptop speakers, skewing taps to -178ms). tap calibration absorbs
-            // the true device latency instead; one measured number beats a
-            // stack of estimates.
             let t = (state.ctx.current_time() - state.start_time).rem_euclid(state.duration);
             Some((state.buf.clone(), t))
         })

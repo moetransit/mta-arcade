@@ -149,7 +149,7 @@ pub fn run(room_url: String) -> AppExit {
                 crate::setup_now_playing,
                 setup_net,
                 setup_sim_grid,
-                crate::hide_loading_screen,
+                crate::start_preload,
             )
                 .chain(),
         )
@@ -174,6 +174,7 @@ pub fn run(room_url: String) -> AppExit {
                 mouse_look,
                 crate::show_now_playing,
                 crate::update_iidx,
+                crate::hide_loading_when_ready,
                 (
                     sync_bodies,
                     camera_follow,
