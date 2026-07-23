@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use crate::vibe::BeatClock;
 use mta_sim::{judge as sim_judge, BeatGrid, Judgment};
 
-const COOLDOWN_S: f32 = 0.5; // solo practice cadence; instagib 1.2s comes with mp
+const COOLDOWN_S: f32 = 0.35; // under one beat at 144bpm: consecutive-beat hits possible
 const RANGE: f32 = 200.0;
 const MAX_TARGETS: usize = 8;
 const TARGET_LIFETIME_S: f32 = 8.0;
