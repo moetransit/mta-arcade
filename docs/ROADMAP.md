@@ -37,6 +37,8 @@ The beat clock is already deterministic in the sim (Phase 2/3), so this is a rul
 ## Phase 7+ — dreams (backlog)
 More arenas/tracks, spectator drift-cam (LSD-style idle wander), mobile touch, WebGPU path, cosmetic unlock graffiti, in-world bandcamp jukebox, rhythm-mode leaderboard ghosts.
 
+**Standing intent: standalone Steam release.** Browser is the playtest vehicle; the sim/netcode/renderer are platform-clean already. Keep native compiling (CI), keep web-isms cfg-gated (audio, storage, url-joining). No native<->browser cross-play ever (rollback float determinism across targets). Native audio twin (cpal+rustfft) + Steamworks glue when the time comes; itch.io as dress rehearsal.
+
 ---
 
 ### Sequencing rationale
