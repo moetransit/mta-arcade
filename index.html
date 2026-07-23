@@ -7,11 +7,30 @@
 <style>
   html, body { margin: 0; height: 100%; background: #010e0f; overflow: hidden; }
   #mta-canvas { width: 100%; height: 100%; display: block; outline: none; }
+  #mta-loading {
+    position: fixed; inset: 0; background: #010e0f; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-family: 'Courier New', monospace; color: #86cecb; gap: 18px;
+  }
+  #mta-loading h1 { font-size: 18px; letter-spacing: 4px; margin: 0; color: #137a7f; }
+  .mta-bar { width: 220px; height: 10px; border: 1px solid #137a7f; padding: 1px; }
+  .mta-bar div {
+    height: 100%; width: 40%; background: #137a7f;
+    animation: mta-scan 1.1s ease-in-out infinite alternate;
+  }
+  @keyframes mta-scan { from { margin-left: 0; } to { margin-left: 60%; } }
+  #mta-loading p { font-size: 11px; color: #4a7a7a; margin: 0; }
 </style>
 <link data-trunk rel="copy-dir" href="assets">
 <link data-trunk rel="rust" data-wasm-opt="z" data-wasm-opt-params="--all-features">
 </head>
 <body>
 <canvas id="mta-canvas"></canvas>
+<div id="mta-loading">
+  <h1>MOE TRANSIT ARCADE</h1>
+  <div class="mta-bar"><div></div></div>
+  <p>loading the dream (~20MB, worth it)</p>
+  <p>click once it appears — sound on</p>
+</div>
 </body>
 </html>

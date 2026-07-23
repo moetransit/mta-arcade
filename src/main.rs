@@ -27,6 +27,17 @@ fn main() -> AppExit {
     run_solo()
 }
 
+/// Tear down the static load screen once the app is alive.
+pub fn hide_loading_screen() {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(el) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("mta-loading"))
+    {
+        el.remove();
+    }
+}
+
 fn run_solo() -> AppExit {
     App::new()
         .insert_resource(ClearColor(DEEP_TEAL))
@@ -56,6 +67,7 @@ fn run_solo() -> AppExit {
                 setup_arena,
                 setup_player,
                 setup_now_playing,
+                hide_loading_screen,
             )
                 .chain(),
         )

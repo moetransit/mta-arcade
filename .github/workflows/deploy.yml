@@ -1,0 +1,42 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: install trunk
+        run: |
+          curl -sL https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv trunk /usr/local/bin/
+      - name: build
+        run: trunk build --release --public-url /mta-arcade/
+      - name: size budget (design doc §8 — 20MB soft, 25MB hard)
+        run: |
+          SIZE=$(stat -c%s dist/*_bg.wasm)
+          echo "wasm size: $((SIZE / 1024 / 1024))MB"
+          if [ "$SIZE" -gt 26214400 ]; then
+            echo "::error::wasm exceeds 25MB hard budget"; exit 1
+          elif [ "$SIZE" -gt 20971520 ]; then
+            echo "::warning::wasm exceeds 20MB soft budget"
+          fi
+      - name: publish gh-pages
+        run: |
+          cd dist && touch .nojekyll
+          git init -b gh-pages --quiet
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A && git commit -m "deploy $GITHUB_SHA" --quiet
+          git push --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
