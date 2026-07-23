@@ -181,6 +181,8 @@ pub fn run(room_url: String) -> AppExit {
                     match_vfx,
                     fade_net_vfx,
                     update_hud,
+                    respawn_view_reset,
+                    log_round_events,
                 )
                     .run_if(in_state(NetState::InGame)),
             ),
@@ -610,15 +612,88 @@ fn update_hud(
         return;
     };
     let them = 1 - me;
+    let combo = &m.0.combo[me];
     for mut text in &mut hud {
         text.0 = match m.0.winner {
-            Some(w) if w == me => format!("YOU WIN  {} — {}", m.0.points[me], m.0.points[them]),
-            Some(_) => format!("you lose  {} — {}", m.0.points[me], m.0.points[them]),
-            None => format!(
-                "you {} — {} them   ({} / {} frags)",
-                m.0.points[me], m.0.points[them], m.0.frags[me], m.0.frags[them]
-            ),
+            Some(w) => {
+                let verdict = if w == me { "YOU WIN" } else { "you lose" };
+                let secs = m.0.results_ticks / 60;
+                format!(
+                    "{verdict}  {} — {}
+fire to rematch ({secs}s)",
+                    m.0.points[me], m.0.points[them]
+                )
+            }
+            None => {
+                let mut line = format!(
+                    "you {} — {} them   ({} / {} frags)",
+                    m.0.points[me], m.0.points[them], m.0.frags[me], m.0.frags[them]
+                );
+                if m.0.round > 0 {
+                    line = format!("round {} · {line}", m.0.round + 1);
+                }
+                if combo.count >= 2 {
+                    line.push_str(&format!(
+                        "
+combo x{}",
+                        combo.count
+                    ));
+                    if combo.consec >= 2 {
+                        line.push_str(&format!("  ·  ON-BEAT CHAIN x{}", combo.consec));
+                    }
+                }
+                line
+            }
         };
+    }
+}
+
+/// Snap the local view to the spawn's facing whenever we respawn — dying
+/// shouldn't leave you staring at a wall (first-spawn logic generalized).
+fn respawn_view_reset(
+    match_res: Option<Res<MatchRes>>,
+    local_players: Res<LocalPlayers>,
+    mut look: ResMut<Look>,
+    mut prev_gen: Local<u32>,
+    mut prev_round: Local<u32>,
+) {
+    let Some(m) = match_res else {
+        return;
+    };
+    let Some(&me) = local_players.0.first() else {
+        return;
+    };
+    let generation = m.0.spawn_gen[me];
+    let round = m.0.round;
+    if generation != *prev_gen || round != *prev_round {
+        *prev_gen = generation;
+        *prev_round = round;
+        look.yaw = m.0.players[me].yaw;
+        look.pitch = 0.0;
+    }
+}
+
+/// Round transitions to the console — the e2e harness greps these.
+fn log_round_events(
+    match_res: Option<Res<MatchRes>>,
+    mut prev_winner: Local<Option<usize>>,
+    mut prev_round: Local<u32>,
+) {
+    let Some(m) = match_res else {
+        return;
+    };
+    if m.0.winner != *prev_winner {
+        *prev_winner = m.0.winner;
+        if let Some(w) = m.0.winner {
+            info!(
+                "match over: winner={w} score {}-{}",
+                m.0.points[0], m.0.points[1]
+            );
+        }
+    }
+    if m.0.round != *prev_round {
+        *prev_round = m.0.round;
+        info!("rematch: round {}", m.0.round + 1);
     }
 }
 

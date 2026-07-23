@@ -40,6 +40,19 @@ impl BeatGrid {
     }
 }
 
+impl BeatGrid {
+    /// Which eighth-note slot (beats and offbeats interleaved) `t` lands in.
+    pub fn eighth_slot(&self, t: f64) -> Option<i64> {
+        let i = self.beat_times.partition_point(|&b| b <= t);
+        let prev_i = i.checked_sub(1)?;
+        let prev = *self.beat_times.get(prev_i)?;
+        let next = self.beat_times.get(i).copied()?;
+        let half = (next - prev) / 2.0;
+        let frac = ((t - prev) / half).round() as i64;
+        Some(prev_i as i64 * 2 + frac)
+    }
+}
+
 fn nearest_abs(sorted: &[f64], t: f64) -> Option<f64> {
     let i = sorted.partition_point(|&b| b <= t);
     let prev = i.checked_sub(1).and_then(|j| sorted.get(j));

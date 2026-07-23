@@ -12,6 +12,9 @@ pub const FIRE_COOLDOWN_TICKS: u32 = 12;
 pub const RAY_RANGE: f32 = 200.0;
 /// First to this many points wins (design doc mode 2).
 pub const POINT_LIMIT: u32 = 30;
+/// Results screen duration before auto-rematch (10s at 60Hz). Both players
+/// pressing fire during results rematches sooner.
+pub const RESULTS_TICKS: u32 = 600;
 
 /// One fire event, kept in state so peers (and rollback) agree on the feed.
 #[derive(Clone, Debug, PartialEq)]
@@ -24,6 +27,16 @@ pub struct FireRecord {
     pub dir: [f32; 3],
 }
 
+/// Per-player combo chain, sim-owned so netplay agrees on it.
+/// Display-only for now (no score multiplier) but deterministic by
+/// construction, so a multiplier is a one-line change later.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ComboState {
+    pub count: u32,
+    pub consec: u32,
+    pub last_slot: Option<i64>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MatchState {
     pub players: [PlayerState; 2],
@@ -33,6 +46,14 @@ pub struct MatchState {
     pub tick: u32,
     pub last_fire: Option<FireRecord>,
     pub winner: Option<usize>,
+    /// Counts down during the results screen once a winner exists.
+    pub results_ticks: u32,
+    pub rematch_ready: [bool; 2],
+    /// Increments on each respawn — presentation watches it to reset the view.
+    pub spawn_gen: [u32; 2],
+    pub combo: [ComboState; 2],
+    /// Increments every time a fresh match starts (rematch counter).
+    pub round: u32,
 }
 
 impl MatchState {
@@ -48,7 +69,21 @@ impl MatchState {
             tick: 0,
             last_fire: None,
             winner: None,
+            results_ticks: 0,
+            rematch_ready: [false; 2],
+            spawn_gen: [0; 2],
+            combo: [ComboState::default(), ComboState::default()],
+            round: 0,
         }
+    }
+
+    /// Fresh match, preserving the tick stream and bumping the round counter.
+    fn rematch(&mut self) {
+        let tick = self.tick;
+        let round = self.round + 1;
+        *self = MatchState::new();
+        self.tick = tick;
+        self.round = round;
     }
 
     /// Track time for judgment: the sim tick clock, looped over the track.
@@ -134,7 +169,17 @@ pub fn step_match(
     grid: &BeatGrid,
     track_duration: f64,
 ) {
+    // results phase: countdown, fire-to-rematch, then a fresh round
     if state.winner.is_some() {
+        for (i, input) in inputs.iter().enumerate() {
+            if input.buttons & BTN_FIRE != 0 {
+                state.rematch_ready[i] = true;
+            }
+        }
+        state.results_ticks = state.results_ticks.saturating_sub(1);
+        if state.results_ticks == 0 || (state.rematch_ready[0] && state.rematch_ready[1]) {
+            state.rematch();
+        }
         state.tick += 1;
         return;
     }
@@ -168,13 +213,33 @@ pub fn step_match(
         .map(|t| t < wall_t)
         .unwrap_or(false);
 
-        let judgment = judge(grid, state.track_time(track_duration));
+        let t = state.track_time(track_duration);
+        let judgment = judge(grid, t);
+
+        // combo: off-rhythm firing breaks it; on-rhythm kills grow it
+        if judgment == Judgment::OffRhythm {
+            state.combo[i] = ComboState::default();
+        }
+
         if hit {
             state.frags[i] += 1;
             state.points[i] += judgment.points();
+            if judgment != Judgment::OffRhythm {
+                let slot = grid.eighth_slot(t);
+                let combo = &mut state.combo[i];
+                combo.count += 1;
+                combo.consec = match (combo.last_slot, slot) {
+                    (Some(last), Some(now)) if now == last + 1 => combo.consec + 1,
+                    _ => 1,
+                };
+                combo.last_slot = slot;
+            }
             state.players[victim] = respawn_far_from(state.players[i].pos);
+            state.spawn_gen[victim] = state.spawn_gen[victim].wrapping_add(1);
+            state.combo[victim] = ComboState::default();
             if state.points[i] >= POINT_LIMIT {
                 state.winner = Some(i);
+                state.results_ticks = RESULTS_TICKS;
             }
         }
         state.last_fire = Some(FireRecord {
@@ -240,6 +305,61 @@ mod tests {
         for _ in 0..60 {
             step_match(&mut m, [fire, NetInput::default()], &arena, &g, 420.0);
         }
+        assert_eq!(m.frags[0], 5);
+    }
+
+    #[test]
+    fn full_round_flow() {
+        let arena = graybox();
+        let g = grid();
+        let mut m = MatchState::new();
+        for _ in 0..30 {
+            step_match(&mut m, [NetInput::default(); 2], &arena, &g, 420.0);
+        }
+        let fire = NetInput {
+            buttons: BTN_FIRE,
+            ..Default::default()
+        };
+        // p0 farms the stationary p1 until the point limit trips
+        let mut safety = 0;
+        while m.winner.is_none() {
+            step_match(&mut m, [fire, NetInput::default()], &arena, &g, 420.0);
+            safety += 1;
+            assert!(safety < 3600, "no winner within a minute of farming");
+        }
+        assert_eq!(m.winner, Some(0));
+        assert!(m.results_ticks > 0);
+        assert!(m.spawn_gen[1] > 0, "victim respawns were counted");
+        // both press fire during results -> rematch on that very tick
+        let mut safety = 0;
+        while m.round == 0 {
+            step_match(&mut m, [fire, fire], &arena, &g, 420.0);
+            safety += 1;
+            assert!(safety < 5, "rematch should trigger promptly");
+        }
+        assert_eq!(m.winner, None, "rematch resets the winner");
+        assert_eq!(m.round, 1);
+        assert_eq!(m.points, [0, 0], "fresh round starts clean");
+        assert_eq!(m.frags, [0, 0]);
+    }
+
+    #[test]
+    fn combo_counts_in_sim() {
+        let arena = graybox();
+        let g = grid();
+        let mut m = MatchState::new();
+        for _ in 0..30 {
+            step_match(&mut m, [NetInput::default(); 2], &arena, &g, 420.0);
+        }
+        let fire = NetInput {
+            buttons: BTN_FIRE,
+            ..Default::default()
+        };
+        for _ in 0..60 {
+            step_match(&mut m, [fire, NetInput::default()], &arena, &g, 420.0);
+        }
+        // 5 kills; combo counts only the on-rhythm ones and never exceeds kills
+        assert!(m.combo[0].count <= m.frags[0]);
         assert_eq!(m.frags[0], 5);
     }
 
