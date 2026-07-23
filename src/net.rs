@@ -214,12 +214,8 @@ fn setup_net(mut commands: Commands, url: Res<RoomUrl>, target: Res<crate::PsxTa
         TextColor(Color::srgb(0.53, 0.81, 0.80)),
         Node {
             position_type: PositionType::Absolute,
-            left: Val::Percent(50.0),
-            top: Val::Percent(40.0),
-            margin: UiRect {
-                left: Val::Px(-90.0),
-                ..default()
-            },
+            right: Val::Px(10.0),
+            top: Val::Px(28.0),
             ..default()
         },
         GlobalZIndex(1),

@@ -6,8 +6,10 @@ use crate::arena::{Aabb, SPAWNS};
 use crate::judgment::{judge, BeatGrid, Judgment};
 use crate::movement::{step, NetInput, PlayerState, BTN_FIRE, EYE_HEIGHT};
 
-/// Instagib cadence (design doc §3): 1.2s at 60Hz.
-pub const FIRE_COOLDOWN_TICKS: u32 = 72;
+/// One beat at 144bpm is ~25 ticks: a 24-tick cooldown makes firing on
+/// every consecutive beat possible (barely) — the rhythm skill ceiling.
+/// (was 1.2s instagib; playtest: 'i cant hit two consecutive beats')
+pub const FIRE_COOLDOWN_TICKS: u32 = 24;
 pub const RAY_RANGE: f32 = 200.0;
 /// First to this many points wins (design doc mode 2).
 pub const POINT_LIMIT: u32 = 30;
@@ -235,11 +237,11 @@ mod tests {
             buttons: BTN_FIRE,
             ..Default::default()
         };
-        // hold fire for 60 ticks: exactly one shot resolves (cooldown 72)
+        // hold fire for 60 ticks: shots at t=0, 24, 48 (cooldown 24)
         for _ in 0..60 {
             step_match(&mut m, [fire, NetInput::default()], &arena, &g, 420.0);
         }
-        assert_eq!(m.frags[0], 1);
+        assert_eq!(m.frags[0], 3);
     }
 
     /// Golden 2p-match hash: the full match layer joins the rollback contract.
@@ -281,5 +283,5 @@ mod tests {
         assert_eq!(run(), GOLDEN);
     }
 
-    const GOLDEN: u64 = 2931248736948975657;
+    const GOLDEN: u64 = 3108023750878542374;
 }
