@@ -6,10 +6,9 @@ use crate::arena::{Aabb, SPAWNS};
 use crate::judgment::{judge, BeatGrid, Judgment};
 use crate::movement::{step, NetInput, PlayerState, BTN_FIRE, EYE_HEIGHT};
 
-/// One beat at 144bpm is ~25 ticks: a 24-tick cooldown makes firing on
-/// every consecutive beat possible (barely) — the rhythm skill ceiling.
-/// (was 1.2s instagib; playtest: 'i cant hit two consecutive beats')
-pub const FIRE_COOLDOWN_TICKS: u32 = 24;
+/// Eighth-note cadence: ~12.5 ticks at 144bpm; 12 gives a tick of slack.
+/// (playtest-driven, twice: 1.2s instagib -> beat -> eighth)
+pub const FIRE_COOLDOWN_TICKS: u32 = 12;
 pub const RAY_RANGE: f32 = 200.0;
 /// First to this many points wins (design doc mode 2).
 pub const POINT_LIMIT: u32 = 30;
@@ -237,11 +236,11 @@ mod tests {
             buttons: BTN_FIRE,
             ..Default::default()
         };
-        // hold fire for 60 ticks: shots at t=0, 24, 48 (cooldown 24)
+        // hold fire for 60 ticks: shots every 12 ticks -> 5 frags
         for _ in 0..60 {
             step_match(&mut m, [fire, NetInput::default()], &arena, &g, 420.0);
         }
-        assert_eq!(m.frags[0], 3);
+        assert_eq!(m.frags[0], 5);
     }
 
     /// Golden 2p-match hash: the full match layer joins the rollback contract.
@@ -276,6 +275,11 @@ mod tests {
                     }
                 }
                 h = fnv1a(h, &[m.frags[0] as u8, m.frags[1] as u8]);
+                // weapon-layer state too: positions alone are blind to
+                // cooldown/scoring changes when scripted shots whiff
+                h = fnv1a(h, &m.cooldowns[0].to_le_bytes());
+                h = fnv1a(h, &m.cooldowns[1].to_le_bytes());
+                h = fnv1a(h, &m.points[0].to_le_bytes());
             }
             h
         };
@@ -283,5 +287,5 @@ mod tests {
         assert_eq!(run(), GOLDEN);
     }
 
-    const GOLDEN: u64 = 3108023750878542374;
+    const GOLDEN: u64 = 15094769557619775746;
 }

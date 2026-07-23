@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use crate::vibe::BeatClock;
 use mta_sim::{judge as sim_judge, BeatGrid, Judgment};
 
-const COOLDOWN_S: f32 = 0.35; // under one beat at 144bpm: consecutive-beat hits possible
+const COOLDOWN_S: f32 = 0.18; // eighth-note cadence at 144bpm (208ms)
 const RANGE: f32 = 200.0;
 const MAX_TARGETS: usize = 8;
 const TARGET_LIFETIME_S: f32 = 8.0;
@@ -38,6 +38,7 @@ impl Plugin for GunPlugin {
         app.init_resource::<Score>()
             .init_resource::<Cooldown>()
             .init_resource::<TargetSpawner>()
+            .init_resource::<Combo>()
             .insert_resource(GunEnabled(true))
             .add_systems(Startup, setup_gun_ui)
             .add_systems(
@@ -50,6 +51,7 @@ impl Plugin for GunPlugin {
                     fade_beams,
                     fade_judgments,
                     update_score_text,
+                    update_combo_text,
                 )
                     .run_if(gun_enabled),
             )
@@ -74,6 +76,26 @@ pub fn cleanup_practice(
 pub struct Score {
     pub points: u32,
     pub frags: u32,
+}
+
+/// The combo chain. On-rhythm SHOTS keep it alive and on-rhythm KILLS add
+/// to it; one shot outside the timing windows ends it. The second tier
+/// ("consec") counts only while every on-rhythm hit lands in adjacent
+/// eighth-note slots — literally not missing a beat.
+#[derive(Resource, Default)]
+pub struct Combo {
+    pub count: u32,
+    pub marvelous: u32,
+    pub marv_off: u32,
+    pub great: u32,
+    pub last_slot: Option<i64>,
+    pub consec: u32,
+}
+
+impl Combo {
+    fn reset(&mut self) {
+        *self = Combo::default();
+    }
 }
 
 #[derive(Resource, Default)]
@@ -105,6 +127,9 @@ pub struct JudgmentText {
 #[derive(Component)]
 struct ScoreText;
 
+#[derive(Component)]
+struct ComboText;
+
 /// Reticle beat ticks: converge on the crosshair, meeting exactly on the
 /// beat. Peripheral rhythm aid — thin, low-alpha, never blocks the center.
 #[derive(Component)]
@@ -112,13 +137,22 @@ struct ReticleTick {
     side: f32,
 }
 
-/// Judge a kill instant against the beat grid via the deterministic sim core.
-fn judge(clock: &BeatClock) -> (&'static str, u32) {
+/// Judge a shot instant against the beat grid via the deterministic sim core.
+fn judge(clock: &BeatClock) -> Judgment {
     // NOTE: solo mode judges on the calibrated presentation clock; netplay
-    // will call sim_judge with a sim-tick-derived time instead (doc §5).
+    // judges in the sim (doc §5).
     let grid = BeatGrid::new(clock.beat_times.clone());
-    let j: Judgment = sim_judge(&grid, clock.effective_time());
-    (j.label(), j.points())
+    sim_judge(&grid, clock.effective_time())
+}
+
+/// Which eighth-note slot (beats and offbeats interleaved) a time lands in.
+fn eighth_slot(clock: &BeatClock, t: f64) -> Option<i64> {
+    let i = clock.beat_times.partition_point(|&b| b <= t);
+    let (prev_i, prev) = (i.checked_sub(1)?, *clock.beat_times.get(i.checked_sub(1)?)?);
+    let next = clock.beat_times.get(i).copied()?;
+    let half = (next - prev) / 2.0;
+    let frac = ((t - prev) / half).round() as i64; // 0 = beat, 1 = offbeat, 2 = next beat
+    Some(prev_i as i64 * 2 + frac)
 }
 
 fn setup_gun_ui(
@@ -187,6 +221,23 @@ fn setup_gun_ui(
         },
         GlobalZIndex(1),
         ScoreText,
+    ));
+
+    commands.spawn((
+        Text::new(""),
+        TextFont {
+            font_size: 12.0,
+            ..default()
+        },
+        TextColor(Color::srgb(1.0, 0.9, 0.4)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(10.0),
+            top: Val::Px(28.0),
+            ..default()
+        },
+        GlobalZIndex(1),
+        ComboText,
     ));
 }
 
@@ -261,6 +312,7 @@ fn fire(
     targets: Query<(), With<Target>>,
     clock: Res<BeatClock>,
     mut score: ResMut<Score>,
+    mut combo: ResMut<Combo>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<crate::PsxMaterial>>,
     mut was_locked: Local<bool>,
@@ -314,11 +366,36 @@ fn fire(
         Beam { ttl: 0.12 },
     ));
 
+    // every SHOT is judged: off-rhythm firing ends the combo, on-rhythm
+    // firing keeps it alive, on-rhythm kills grow it
+    let judgment = judge(&clock);
+    if judgment == Judgment::OffRhythm {
+        combo.reset();
+    }
+
     if let Some(entity) = hit_target {
         commands.entity(entity).despawn();
-        let (label, points) = judge(&clock);
         score.frags += 1;
-        score.points += points;
+        score.points += judgment.points();
+
+        if judgment != Judgment::OffRhythm {
+            combo.count += 1;
+            match judgment {
+                Judgment::Marvelous => combo.marvelous += 1,
+                Judgment::MarvOff => combo.marv_off += 1,
+                Judgment::Great => combo.great += 1,
+                Judgment::OffRhythm => {}
+            }
+            // tier 2: adjacent eighth-note slots = not missing a beat
+            let slot = eighth_slot(&clock, clock.effective_time());
+            combo.consec = match (combo.last_slot, slot) {
+                (Some(last), Some(now)) if now == last + 1 => combo.consec + 1,
+                _ => 1,
+            };
+            combo.last_slot = slot;
+        }
+
+        let (label, points) = (judgment.label(), judgment.points());
         commands.spawn((
             Text::new(format!("{label} +{points}")),
             TextFont {
@@ -345,6 +422,34 @@ fn fire(
             GlobalZIndex(1),
             JudgmentText { ttl: 0.8 },
         ));
+    }
+}
+
+fn update_combo_text(combo: Res<Combo>, mut texts: Query<&mut Text, With<ComboText>>) {
+    if !combo.is_changed() {
+        return;
+    }
+    for mut text in &mut texts {
+        text.0 = if combo.count < 2 {
+            String::new()
+        } else {
+            let mut parts = Vec::new();
+            if combo.marvelous > 0 {
+                parts.push(format!("{}x MARVELOUS", combo.marvelous));
+            }
+            if combo.marv_off > 0 {
+                parts.push(format!("{}x MARV·OFF", combo.marv_off));
+            }
+            if combo.great > 0 {
+                parts.push(format!("{}x GREAT", combo.great));
+            }
+            let consec = if combo.consec >= 2 {
+                format!("  |  ON-BEAT CHAIN x{}", combo.consec)
+            } else {
+                String::new()
+            };
+            format!("combo {} — {}{}", combo.count, parts.join(" · "), consec)
+        };
     }
 }
 
